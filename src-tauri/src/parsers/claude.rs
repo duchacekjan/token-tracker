@@ -17,7 +17,6 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
     let mut project: Option<String> = None;
     let mut agent_id: Option<String> = None;
     let mut first_sidechain: Option<bool> = None;
-    let mut usage_sidechain = false;
     let mut turns: Vec<ParsedTurn> = Vec::new();
     let mut by_key: HashMap<String, usize> = HashMap::new();
 
@@ -61,8 +60,6 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         if model == "<synthetic>" {
             continue;
         }
-
-        usage_sidechain |= sidechain == Some(true);
 
         let msg_id = msg.get("id").and_then(Value::as_str);
         let req_id = v.get("requestId").and_then(Value::as_str);
@@ -108,6 +105,12 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
             .unwrap_or_default()
     });
 
+    let in_subagents_dir = path
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|n| n == "subagents");
+    let is_subagent = in_subagents_dir || (agent_id.is_some() && first_sidechain == Some(true));
+
     let meta = read_meta(path);
     let meta_str = |k: &str| meta.as_ref()?.get(k)?.as_str().map(String::from);
 
@@ -118,7 +121,7 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         file_path: path.to_string_lossy().into_owned(),
         turns,
         agent_id,
-        is_subagent: usage_sidechain || first_sidechain == Some(true),
+        is_subagent,
         agent_label: meta_str("description"),
         agent_type: meta_str("agentType"),
         log_deleted: false,
@@ -241,6 +244,20 @@ mod tests {
         let s = parse_file(&fixture(&format!("{SUB_DIR}/agent-badmeta.jsonl"))).unwrap();
         assert!(s.is_subagent);
         assert!(s.agent_label.is_none() && s.agent_type.is_none());
+    }
+
+    #[test]
+    fn inline_sidechain_turn_keeps_main_transcript() {
+        let s = parse_file(&fixture("inline-sidechain.jsonl")).unwrap();
+        assert!(!s.is_subagent);
+        assert_eq!(s.turns.len(), 2);
+    }
+
+    #[test]
+    fn agent_id_with_sidechain_first_line_outside_subagents_dir() {
+        let s = parse_file(&fixture("loose-agent.jsonl")).unwrap();
+        assert!(s.is_subagent);
+        assert_eq!(s.agent_id.as_deref(), Some("loose"));
     }
 
     #[test]
