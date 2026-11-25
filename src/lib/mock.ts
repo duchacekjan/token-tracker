@@ -98,7 +98,7 @@ const details: SessionDetail[] = [
   build("019a-ffff-0003", "codex", "/home/dev/side/preview-test", 3600, ["codex-next-preview"], 5, 0.5),
 ];
 
-let mockSettings: Settings = { extraClaudeDirs: ["/mnt/backup/.claude"], extraCodexDirs: [] };
+let mockSettings: Settings = { extraClaudeDirs: ["/mnt/backup/.claude/projects"], extraCodexDirs: [] };
 let pricingUpdated: string | null = new Date().toISOString();
 
 const delay = <T>(v: T, ms = 150) => new Promise<T>((r) => setTimeout(() => r(v), ms));

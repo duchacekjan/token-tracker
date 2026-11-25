@@ -101,6 +101,7 @@
         {/each}
       </ul>
       <p class="muted">Extra directories</p>
+      <p class="muted">Folder containing .jsonl session files (scanned recursively).</p>
       <ul class="dirlist">
         {#each g.extra as d, i (d)}
           <li>
@@ -119,10 +120,10 @@
         }}
       >
         {#if g.kind === "claude"}
-          <input type="text" placeholder="/path/to/.claude" bind:value={newClaude} />
+          <input type="text" placeholder="/path/to/.claude/projects" bind:value={newClaude} />
           <button class="primary" disabled={saving || !newClaude.trim()}>Add</button>
         {:else}
-          <input type="text" placeholder="/path/to/.codex" bind:value={newCodex} />
+          <input type="text" placeholder="/path/to/.codex/sessions" bind:value={newCodex} />
           <button class="primary" disabled={saving || !newCodex.trim()}>Add</button>
         {/if}
       </form>
