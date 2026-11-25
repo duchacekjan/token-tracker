@@ -211,6 +211,48 @@ pub fn detail_group(g: &SessionGroup, prices: &PriceTable) -> SessionDetail {
     }
 }
 
+/// Codex moves rollouts from `sessions/` to `archived_sessions/`, so one
+/// session id can have several transcripts. Keep exactly one per id:
+/// present over log-deleted, then more turns, later end, then path.
+fn dedup_codex(sessions: Vec<ParsedSession>) -> Vec<ParsedSession> {
+    let better = |a: &ParsedSession, b: &ParsedSession| {
+        let ka = (
+            !a.log_deleted,
+            a.turns.len(),
+            a.turns.iter().filter_map(|t| t.timestamp).max(),
+        );
+        let kb = (
+            !b.log_deleted,
+            b.turns.len(),
+            b.turns.iter().filter_map(|t| t.timestamp).max(),
+        );
+        ka.cmp(&kb)
+            .then_with(|| b.file_path.cmp(&a.file_path))
+            .is_gt()
+    };
+    let mut best: HashMap<String, usize> = HashMap::new();
+    let mut keep: Vec<Option<ParsedSession>> = Vec::new();
+    for s in sessions {
+        if s.source != Source::Codex {
+            keep.push(Some(s));
+            continue;
+        }
+        let key = s.id.clone();
+        match best.get(&key) {
+            Some(&i) => {
+                if keep[i].as_ref().is_some_and(|cur| better(&s, cur)) {
+                    keep[i] = Some(s);
+                }
+            }
+            None => {
+                best.insert(key, keep.len());
+                keep.push(Some(s));
+            }
+        }
+    }
+    keep.into_iter().flatten().collect()
+}
+
 /// Dedup Claude transcripts (oldest-first), drop empties, group, and
 /// summarize. Summaries sorted by started_at desc, None last.
 pub fn build(
@@ -226,6 +268,7 @@ pub fn build(
             .then_with(|| a.file_path.cmp(&b.file_path))
     });
     dedup_claude(&mut claude_s);
+    let other = dedup_codex(other);
     let all: Vec<ParsedSession> = claude_s
         .into_iter()
         .chain(other)
@@ -547,6 +590,27 @@ mod tests {
         assert_eq!(sums[0].subagent_count, 0);
         assert_eq!(sums[0].transcripts.len(), 1);
         assert_eq!(sums[0].source, Source::Codex);
+    }
+
+    #[test]
+    fn codex_archive_copies_counted_once() {
+        let mk = |path: &str, deleted: bool| {
+            let mut c = sess(
+                path,
+                vec![turn("gpt-5", None, 0, 5), turn("gpt-5", None, 1, 5)],
+            );
+            c.source = Source::Codex;
+            c.id = "x".into();
+            c.log_deleted = deleted;
+            c
+        };
+        let (g, sums) = build(vec![mk("old", true), mk("new", false)], &table());
+        assert_eq!(g[0].transcripts.len(), 1);
+        assert_eq!(g[0].transcripts[0].file_path, "new");
+        assert_eq!(sums.len(), 1);
+        assert_eq!(sums[0].usage.output, 10);
+        assert_eq!(sums[0].turn_count, 2);
+        assert!(!sums[0].log_deleted);
     }
 
     #[test]

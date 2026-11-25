@@ -5,12 +5,12 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 /// Bump when parser output semantics change; forces a reparse of every file.
 pub const PARSER_VERSION: i64 = 1;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SyncStats {
@@ -48,6 +48,24 @@ fn to_u64(v: Option<i64>) -> u64 {
     v.and_then(|x| u64::try_from(x).ok()).unwrap_or(0)
 }
 
+/// (size, mtime_ns, parser_version, meta_size, meta_mtime_ns) of a stored file.
+type Stored = (i64, i64, i64, Option<i64>, Option<i64>);
+
+/// Sibling `<stem>.meta.json` stat, only for Claude subagent transcripts.
+fn meta_stat(source: Source, path: &Path) -> Option<(i64, i64)> {
+    if source != Source::Claude {
+        return None;
+    }
+    let in_subagents = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n == "subagents");
+    if !in_subagents {
+        return None;
+    }
+    stat(&path.with_extension("meta.json")).ok()
+}
+
 /// (size, mtime ns since epoch) of a file.
 fn stat(path: &Path) -> std::io::Result<(i64, i64)> {
     let md = std::fs::metadata(path)?;
@@ -67,6 +85,7 @@ impl Store {
             }
         }
         let conn = Connection::open(path)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         Self::init(conn)
     }
@@ -125,6 +144,16 @@ impl Store {
             )?;
             tx.commit()?;
         }
+        if version < 2 {
+            // NULL meta columns force a reparse of subagent files that have a meta.json.
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(
+                "ALTER TABLE files ADD COLUMN meta_size INTEGER;
+                 ALTER TABLE files ADD COLUMN meta_mtime_ns INTEGER;
+                 PRAGMA user_version = 2;",
+            )?;
+            tx.commit()?;
+        }
         Ok(())
     }
 
@@ -147,7 +176,11 @@ impl Store {
             .chain(codex_files.iter().map(|p| (Source::Codex, p)));
 
         for (source, path) in listed {
-            let key = path.to_string_lossy().into_owned();
+            let Some(key) = path.to_str().map(str::to_owned) else {
+                // Non-UTF-8 path: cannot be stored losslessly.
+                stats.failed += 1;
+                continue;
+            };
             if !seen.insert(key.clone()) {
                 continue;
             }
@@ -156,14 +189,24 @@ impl Store {
                 continue;
             };
 
-            let existing: Option<(i64, i64, i64)> = tx
+            let meta = meta_stat(source, path);
+            let existing: Option<Stored> = tx
                 .query_row(
-                    "SELECT size, mtime_ns, parser_version FROM files WHERE path = ?1",
+                    "SELECT size, mtime_ns, parser_version, meta_size, meta_mtime_ns
+                     FROM files WHERE path = ?1",
                     [&key],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )
                 .optional()?;
-            if existing == Some((size, mtime_ns, PARSER_VERSION)) {
+            if existing
+                == Some((
+                    size,
+                    mtime_ns,
+                    PARSER_VERSION,
+                    meta.map(|m| m.0),
+                    meta.map(|m| m.1),
+                ))
+            {
                 tx.execute("UPDATE files SET present = 1 WHERE path = ?1", [&key])?;
                 stats.unchanged += 1;
                 continue;
@@ -172,6 +215,8 @@ impl Store {
             let session = match parse(source, path) {
                 Ok(s) => s,
                 Err(_) => {
+                    // File exists on disk: keep old data, size and mtime so it retries.
+                    tx.execute("UPDATE files SET present = 1 WHERE path = ?1", [&key])?;
                     stats.failed += 1;
                     continue;
                 }
@@ -181,8 +226,9 @@ impl Store {
             tx.execute("DELETE FROM files WHERE path = ?1", [&key])?;
             tx.execute(
                 "INSERT INTO files (path, source, size, mtime_ns, parser_version, session_id,
-                    project, agent_id, is_subagent, agent_label, agent_type, present, parsed_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12)",
+                    project, agent_id, is_subagent, agent_label, agent_type, present, parsed_at,
+                    meta_size, meta_mtime_ns)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12, ?13, ?14)",
                 params![
                     key,
                     source_str(source),
@@ -196,6 +242,8 @@ impl Store {
                     session.agent_label,
                     session.agent_type,
                     Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
+                    meta.map(|m| m.0),
+                    meta.map(|m| m.1),
                 ],
             )?;
             {
@@ -244,76 +292,55 @@ impl Store {
     }
 
     pub fn load_all(&self) -> anyhow::Result<Vec<ParsedSession>> {
-        struct Row {
-            path: String,
-            source: String,
-            id: String,
-            project: Option<String>,
-            agent_id: Option<String>,
-            is_subagent: bool,
-            agent_label: Option<String>,
-            agent_type: Option<String>,
-            present: bool,
-        }
-        let rows: Vec<Row> = {
-            let mut q = self.conn.prepare(
-                "SELECT path, source, session_id, project, agent_id, is_subagent,
-                        agent_label, agent_type, present
-                 FROM files ORDER BY path",
-            )?;
-            let it = q.query_map([], |r| {
-                Ok(Row {
-                    path: r.get(0)?,
-                    source: r.get(1)?,
+        let mut q = self.conn.prepare(
+            "SELECT f.path, f.source, f.session_id, f.project, f.agent_id, f.is_subagent,
+                    f.agent_label, f.agent_type, f.present,
+                    t.timestamp, t.model, t.input, t.output, t.cache_creation,
+                    t.cache_read, t.reasoning, t.dedup_key
+             FROM files f LEFT JOIN turns t ON t.path = f.path
+             ORDER BY f.path, t.seq",
+        )?;
+        let mut rows = q.query([])?;
+        let mut out: Vec<ParsedSession> = Vec::new();
+        while let Some(r) = rows.next()? {
+            let path: String = r.get(0)?;
+            if out.last().map(|s| s.file_path != path).unwrap_or(true) {
+                let source: String = r.get(1)?;
+                out.push(ParsedSession {
                     id: r.get(2)?,
+                    source: source_from(&source)?,
                     project: r.get(3)?,
+                    file_path: path,
+                    turns: Vec::new(),
                     agent_id: r.get(4)?,
                     is_subagent: r.get::<_, i64>(5)? != 0,
                     agent_label: r.get(6)?,
                     agent_type: r.get(7)?,
-                    present: r.get::<_, i64>(8)? != 0,
-                })
-            })?;
-            it.collect::<Result<_, _>>()?
-        };
-
-        let mut turn_q = self.conn.prepare(
-            "SELECT timestamp, model, input, output, cache_creation, cache_read, reasoning, dedup_key
-             FROM turns WHERE path = ?1 ORDER BY seq",
-        )?;
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows {
-            let turns = turn_q
-                .query_map([&row.path], |r| {
-                    let ts: Option<String> = r.get(0)?;
-                    Ok(ParsedTurn {
-                        timestamp: ts
-                            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                            .map(|d| d.with_timezone(&Utc)),
-                        model: r.get(1)?,
-                        usage: TokenUsage {
-                            input: to_u64(r.get(2)?),
-                            output: to_u64(r.get(3)?),
-                            cache_creation: to_u64(r.get(4)?),
-                            cache_read: to_u64(r.get(5)?),
-                            reasoning: to_u64(r.get(6)?),
-                        },
-                        dedup_key: r.get(7)?,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            out.push(ParsedSession {
-                id: row.id,
-                source: source_from(&row.source)?,
-                project: row.project,
-                file_path: row.path,
-                turns,
-                agent_id: row.agent_id,
-                is_subagent: row.is_subagent,
-                agent_label: row.agent_label,
-                agent_type: row.agent_type,
-                log_deleted: !row.present,
-            });
+                    log_deleted: r.get::<_, i64>(8)? == 0,
+                });
+            }
+            // LEFT JOIN: model is NOT NULL in turns, so NULL means no turn row.
+            let Some(model) = r.get::<_, Option<String>>(10)? else {
+                continue;
+            };
+            let ts: Option<String> = r.get(9)?;
+            let turn = ParsedTurn {
+                timestamp: ts
+                    .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|d| d.with_timezone(&Utc)),
+                model,
+                usage: TokenUsage {
+                    input: to_u64(r.get(11)?),
+                    output: to_u64(r.get(12)?),
+                    cache_creation: to_u64(r.get(13)?),
+                    cache_read: to_u64(r.get(14)?),
+                    reasoning: to_u64(r.get(15)?),
+                },
+                dedup_key: r.get(16)?,
+            };
+            if let Some(last) = out.last_mut() {
+                last.turns.push(turn);
+            }
         }
         Ok(out)
     }
@@ -540,6 +567,116 @@ mod tests {
         let st = s.sync(&cf, &xf, real_parse).unwrap();
         assert_eq!(st.parsed, 1);
         assert_eq!(st.failed, 0);
+    }
+
+    #[test]
+    fn parse_error_on_deleted_row_marks_present() {
+        let td = tempfile::tempdir().unwrap();
+        let (cf, xf) = setup(td.path());
+        let mut s = Store::open_in_memory().unwrap();
+        s.sync(&cf, &xf, real_parse).unwrap();
+        s.conn
+            .execute(
+                "UPDATE files SET present = 0 WHERE path = ?1",
+                [cf[0].to_str().unwrap()],
+            )
+            .unwrap();
+        let mut content = std::fs::read_to_string(&cf[0]).unwrap();
+        content.push_str("\n\n");
+        std::fs::write(&cf[0], content).unwrap();
+        let st = s
+            .sync(&cf, &xf, |src, p| {
+                if p == cf[0] {
+                    anyhow::bail!("boom")
+                }
+                real_parse(src, p)
+            })
+            .unwrap();
+        assert_eq!(st.failed, 1);
+        assert!(s.load_all().unwrap().iter().all(|x| !x.log_deleted));
+        // Old size kept, so it retries.
+        let st = s.sync(&cf, &xf, real_parse).unwrap();
+        assert_eq!(st.parsed, 1);
+    }
+
+    #[test]
+    fn meta_json_change_triggers_reparse() {
+        let td = tempfile::tempdir().unwrap();
+        let (cf, xf) = setup(td.path());
+        let sub = cf.last().unwrap().clone();
+        let meta = sub.with_extension("meta.json");
+        std::fs::remove_file(&meta).unwrap();
+        let mut s = Store::open_in_memory().unwrap();
+        s.sync(&cf, &xf, real_parse).unwrap();
+        let label = |s: &Store| {
+            s.load_all()
+                .unwrap()
+                .into_iter()
+                .find(|x| Path::new(&x.file_path) == sub)
+                .unwrap()
+                .agent_label
+        };
+        assert!(label(&s).is_none());
+        std::fs::copy(
+            fixtures()
+                .join("claude/11111111-2222-4333-8444-555555555555/subagents/agent-abc.meta.json"),
+            &meta,
+        )
+        .unwrap();
+        let st = s.sync(&cf, &xf, real_parse).unwrap();
+        assert_eq!(st.parsed, 1);
+        assert_eq!(st.unchanged, 3);
+        assert!(label(&s).is_some());
+        let st = s.sync(&cf, &xf, real_parse).unwrap();
+        assert_eq!(st.parsed, 0);
+    }
+
+    #[test]
+    fn v1_db_migrates() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE files (path TEXT PRIMARY KEY, source TEXT NOT NULL, size INTEGER NOT NULL,
+                mtime_ns INTEGER NOT NULL, parser_version INTEGER NOT NULL, session_id TEXT NOT NULL,
+                project TEXT, agent_id TEXT, is_subagent INTEGER NOT NULL, agent_label TEXT,
+                agent_type TEXT, present INTEGER NOT NULL, parsed_at TEXT NOT NULL);
+             CREATE TABLE turns (path TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,
+                seq INTEGER NOT NULL, timestamp TEXT, model TEXT NOT NULL, input INTEGER,
+                output INTEGER, cache_creation INTEGER, cache_read INTEGER, reasoning INTEGER,
+                dedup_key TEXT, PRIMARY KEY(path, seq));
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        let s = Store::init(conn).unwrap();
+        let v: i64 = s
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 2);
+        let n: i64 = s
+            .conn
+            .query_row(
+                "SELECT COUNT(meta_size) + COUNT(meta_mtime_ns) FROM files",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_path_skipped_as_failed() {
+        use std::os::unix::ffi::OsStrExt;
+        let td = tempfile::tempdir().unwrap();
+        let p = td
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"bad\xff.jsonl"));
+        std::fs::write(&p, "{}\n").unwrap();
+        let mut s = Store::open_in_memory().unwrap();
+        let st = s.sync(&[p], &[], real_parse).unwrap();
+        assert_eq!(st.failed, 1);
+        assert_eq!(st.parsed, 0);
+        assert!(s.load_all().unwrap().is_empty());
     }
 
     #[test]
