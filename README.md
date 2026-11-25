@@ -90,7 +90,12 @@ When a stored file is no longer on disk, for example because Claude Code deleted
 
 Session detail uses the groups from the last scan. If the session is not among them, the app runs a scan and looks again.
 
-If the database file cannot be opened, or its schema is newer than this app supports, the app renames the file to `token-tracker.sqlite.broken-<YYYYMMDD-HHMMSS>` in the same folder. Its `-wal` and `-shm` siblings are renamed the same way. Nothing is deleted. The app then creates a new database, refills it from the logs, and shows a warning banner that explains this. History of logs that were already deleted remains only in the renamed file. If the old file cannot be renamed, or no new database can be created, the app uses an in-memory database and the banner says that persistence is off. Data in that database is lost on exit.
+If the database file cannot be opened, the app handles the failure by its cause.
+
+- **Schema from a newer app version.** The database `user_version` is higher than this build supports. The file is left untouched. The app uses a temporary in-memory database, so nothing is saved, and a warning tells the user to update the app.
+- **Other open failures**, for example `file is not a database` or a migration error. The app renames the file to `token-tracker.sqlite.broken-<YYYYMMDD-HHMMSS>` in the same folder. Its `-wal` and `-shm` siblings are renamed the same way. Nothing is deleted. The app then creates a new database, refills it from the logs, and shows a warning banner that explains this. History of logs that were already deleted remains only in the renamed file. If the old file cannot be renamed, or no new database can be created, the app uses an in-memory database and the banner says that persistence is off. Data in that database is lost on exit.
+
+No integrity check runs at startup, so damage deeper in the file surfaces later as a load error in the UI.
 
 ## How tokens are counted
 
