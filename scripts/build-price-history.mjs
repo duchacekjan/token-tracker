@@ -14,6 +14,14 @@
 //
 // Method: sample last commit of each ISO week, then bisect between samples whose
 // tracked-model state differs, so `from` is the exact first commit with the new price.
+//
+// Limitation: weekly sampling can miss an A->B->A price flip that starts and ends
+// inside one week (both week-boundary samples show A, so no bisect happens and B is
+// never recorded).
+//
+// Order: `git log --first-parent` follows mainline only, giving a linear, monotonic history
+// for bisect (plain --topo-order interleaves stale side-branch states and yields bogus
+// price flip-flops). --diff-merges=first-parent keeps merge commits that change the file.
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 
@@ -33,7 +41,7 @@ const FIELDS = [
 ];
 
 // commits oldest -> newest with the file path at that commit
-const raw = git('log', '--follow', '--name-only', '--format=@@%H %cI', '--', 'model_prices_and_context_window.json');
+const raw = git('log', '--first-parent', '--diff-merges=first-parent', '--follow', '--name-only', '--format=@@%H %cI', '--', 'model_prices_and_context_window.json');
 const commits = [];
 for (const blk of raw.split('@@').slice(1)) {
   const [head, ...rest] = blk.split('\n');
@@ -93,7 +101,8 @@ function bisect(lo, hi) { // lo, hi valid indices with differing state
   if (m <= lo) { // everything in (lo, mid] invalid; probe above
     const m2 = (() => { for (let k = mid + 1; k < hi; k++) if (state(k)) return k; return -1; })();
     if (m2 < 0) { points.add(hi); return; }
-    if (sig(m2) === sig(lo)) bisect(m2, hi); else bisect(lo, m2);
+    if (sig(m2) !== sig(lo)) bisect(lo, m2);
+    if (sig(m2) !== sig(hi)) bisect(m2, hi);
     return;
   }
   if (sig(m) !== sig(lo)) bisect(lo, m);
