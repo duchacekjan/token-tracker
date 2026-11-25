@@ -55,18 +55,29 @@ Only directories that exist are used. Each one is scanned recursively for files 
 
 **Extra directories**
 
-Settings lets you add more directories for Claude Code or Codex CLI. An extra directory is scanned as given, recursively. The app does not add `projects` or `sessions` to it. Duplicate and missing paths are ignored.
+Settings lets you add more directories for Claude Code or Codex CLI. Extra directories are added to the default directories above. Each one is scanned as given, recursively. The app does not append `projects` or `sessions`, so add the directory that contains the `.jsonl` files itself, for example:
+
+- Claude Code: `/path/to/.claude/projects`
+- Codex CLI: `/path/to/.codex/sessions`
+
+Duplicate and missing paths are ignored.
 
 Extra directories are stored in `settings.json` in the app config directory:
 
 ```json
 {
-  "extraClaudeDirs": ["/mnt/backup/claude-logs"],
+  "extraClaudeDirs": ["/mnt/backup/claude/projects"],
   "extraCodexDirs": []
 }
 ```
 
 If `settings.json` is missing or invalid, the app uses no extra directories.
+
+**Reload and caching**
+
+Reload runs the same scan as on load. The parse result of each `.jsonl` file is kept in memory, keyed by path, modification time and size. A file whose key has not changed is not parsed again. Entries for files that no longer exist are dropped. Deduplication and totals are recomputed on every scan. The cache is not saved to disk, so it is empty after restart.
+
+Session detail uses the result from the last scan. If the file was not in that scan, the app parses that file alone, without cross-session deduplication.
 
 ## How tokens are counted
 
@@ -75,7 +86,8 @@ If `settings.json` is missing or invalid, the app uses no extra directories.
 - Reads `assistant` entries that have `message.usage` and `message.model`. Entries with the model `<synthetic>` are skipped.
 - Counts `input_tokens`, `output_tokens`, `cache_creation_input_tokens` and `cache_read_input_tokens`.
 - Entries that repeat the same response are merged. The key is `message.id` plus `requestId`. Within one file, the last entry's usage is kept, at the position of the first entry.
-- Deduplication runs per file.
+- Across sessions, a turn whose key already appeared in an earlier session is dropped, so the copy in the oldest session is kept. Sessions are ordered by their first turn timestamp, oldest first. Sessions with no timestamp come first, and ties are ordered by file path. Turns without a key are kept. Sessions left with no turns are removed.
+- Cross-session deduplication applies to Claude Code only. Codex CLI sessions are not deduplicated.
 - The session ID is the first `sessionId` in the file, or the file name if there is none. The project is the first `cwd`.
 
 **Codex CLI** (`src-tauri/src/parsers/codex.rs`)
@@ -91,7 +103,7 @@ If `settings.json` is missing or invalid, the app uses no extra directories.
 Prices come from LiteLLM's [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm).
 
 - **On startup**, the app loads the cached copy (`litellm_prices.json` in the app cache directory). If there is no cache, it uses the bundled snapshot at `src-tauri/resources/bundled_prices.json`. If the cache cannot be read, it uses the bundled snapshot and reports the error.
-- **Refresh prices** downloads the current file from GitHub (20-second timeout) and saves it to the cache.
+- **Refresh prices** downloads the current file from GitHub (20-second timeout), saves it to the cache, and uses it right away.
 - Entries without both an input and an output price are ignored. A missing cache-write or cache-read price uses the input price.
 
 **Model name matching** is case-insensitive:
@@ -131,6 +143,7 @@ Prices are flat per token. Tiered long-context prices are not applied.
     └── src/
         ├── lib.rs                app setup and command registration
         ├── commands.rs           Tauri commands called by the frontend
+        ├── aggregate.rs          cross-session deduplication, summaries and detail
         ├── discovery.rs          log directories, JSONL scan, settings
         ├── model.rs              shared data types
         ├── pricing.rs            price table, lookup and cost
