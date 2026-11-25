@@ -46,6 +46,10 @@
     session.id;
     trFilter = "all";
   });
+  // Reset when reloaded detail has fewer transcripts than the selected index.
+  $effect(() => {
+    if (trFilter !== "all" && Number(trFilter) >= s.transcripts.length) trFilter = "all";
+  });
   const visibleTurns = $derived.by(() => {
     const turns = detail?.turns ?? [];
     if (trFilter === "all") return turns.map((t, i) => ({ t, i }));

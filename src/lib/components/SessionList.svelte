@@ -105,9 +105,10 @@
         s.models.some((m) => m.toLowerCase().includes(q)) ||
         s.transcripts.some(
           (t) =>
-            trLabel(t).toLowerCase().includes(q) ||
-            (t.agentId ?? "").toLowerCase().includes(q) ||
-            (t.agentType ?? "").toLowerCase().includes(q),
+            t.isSubagent &&
+            (trLabel(t).toLowerCase().includes(q) ||
+              (t.agentId ?? "").toLowerCase().includes(q) ||
+              (t.agentType ?? "").toLowerCase().includes(q)),
         )
       );
     });
