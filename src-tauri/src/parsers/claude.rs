@@ -38,7 +38,9 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         if v.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
-        let Some(msg) = v.get("message") else { continue };
+        let Some(msg) = v.get("message") else {
+            continue;
+        };
         let Some(usage) = msg.get("usage").filter(|u| u.is_object()) else {
             continue;
         };
@@ -124,7 +126,13 @@ mod tests {
         assert_eq!(t.model, "claude-sonnet-4-5");
         assert_eq!(t.dedup_key.as_deref(), Some("msg_1:req_1"));
         assert_eq!(
-            (t.usage.input, t.usage.output, t.usage.cache_creation, t.usage.cache_read, t.usage.reasoning),
+            (
+                t.usage.input,
+                t.usage.output,
+                t.usage.cache_creation,
+                t.usage.cache_read,
+                t.usage.reasoning
+            ),
             (10, 20, 300, 4000, 0)
         );
         assert!(t.timestamp.is_some());
@@ -159,7 +167,10 @@ mod tests {
     fn missing_cache_fields_default_zero() {
         let s = parse_file(&fixture("synthetic.jsonl")).unwrap();
         let u = &s.turns[0].usage;
-        assert_eq!((u.input, u.output, u.cache_creation, u.cache_read), (3, 4, 0, 0));
+        assert_eq!(
+            (u.input, u.output, u.cache_creation, u.cache_read),
+            (3, 4, 0, 0)
+        );
     }
 
     #[test]

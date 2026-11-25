@@ -246,7 +246,10 @@ mod tests {
         assert_eq!(t.price_for("gpt-viaprefix").unwrap().input, 4.0);
         assert_eq!(t.price_for("claude-x-1[1m]").unwrap().input, 0.000003);
         assert_eq!(t.price_for("claude-x-1-20250101").unwrap().input, 0.000003);
-        assert_eq!(t.price_for("claude-x-1-20250101[1m]").unwrap().input, 0.000003);
+        assert_eq!(
+            t.price_for("claude-x-1-20250101[1m]").unwrap().input,
+            0.000003
+        );
         // prefix: longest key wins
         assert_eq!(t.price_for("gpt-short-foo").unwrap().input, 1.0);
         assert_eq!(t.price_for("gpt-short-longer-foo").unwrap().input, 7.0);
