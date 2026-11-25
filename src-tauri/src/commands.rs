@@ -86,9 +86,8 @@ pub async fn list_sessions(
         let (cd, xd) = discovery::effective_dirs(&settings);
         let cf = discovery::find_jsonl(&cd);
         let xf = discovery::find_jsonl(&xd);
-        let sessions = aggregate::scan_with(&cf, &xf, |src, p| {
-            parse_cached(&state.parse_cache, src, p)
-        });
+        let sessions =
+            aggregate::scan_with(&cf, &xf, |src, p| parse_cached(&state.parse_cache, src, p));
         // Drop cache entries for files that no longer exist.
         if let Ok(mut c) = state.parse_cache.lock() {
             c.retain(|(p, _, _), _| cf.contains(p) || xf.contains(p));

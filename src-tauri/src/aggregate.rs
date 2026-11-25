@@ -154,8 +154,14 @@ mod tests {
     #[test]
     fn dedup_across_sessions() {
         let mut v = vec![
-            sess("a", vec![turn("m", Some("k1"), 0, 1), turn("m", Some("k2"), 1, 1)]),
-            sess("b", vec![turn("m", Some("k2"), 1, 1), turn("m", Some("k3"), 2, 1)]),
+            sess(
+                "a",
+                vec![turn("m", Some("k1"), 0, 1), turn("m", Some("k2"), 1, 1)],
+            ),
+            sess(
+                "b",
+                vec![turn("m", Some("k2"), 1, 1), turn("m", Some("k3"), 2, 1)],
+            ),
         ];
         dedup_claude(&mut v);
         assert_eq!(v[0].turns.len(), 2);
