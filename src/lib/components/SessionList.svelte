@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SessionSummary } from "../types";
+  import type { SessionSummary, TranscriptSummary } from "../types";
   import {
     durationMs,
     fmtCompact,
@@ -9,6 +9,7 @@
     fmtUsd,
     projectName,
     sessionTotal,
+    totalTokens,
   } from "../format";
 
   interface Props {
@@ -37,6 +38,11 @@
   let search = $state("");
   let sortKey = $state<SortKey>("startedAt");
   let sortDir = $state<"asc" | "desc">("desc");
+
+  let expanded = $state<Record<string, boolean>>({});
+  const keyOf = (s: SessionSummary) => `${s.source}:${s.id}`;
+  const trLabel = (t: TranscriptSummary) => (t.isSubagent ? (t.agentLabel ?? t.agentId ?? "worker") : "Main");
+  const LOG_DELETED_TIP = "Original log file was removed; data kept in local database";
 
   const columns: { key: SortKey; label: string; num?: boolean }[] = [
     { key: "source", label: "Source" },
@@ -96,7 +102,13 @@
       return (
         (s.project ?? "").toLowerCase().includes(q) ||
         s.id.toLowerCase().includes(q) ||
-        s.models.some((m) => m.toLowerCase().includes(q))
+        s.models.some((m) => m.toLowerCase().includes(q)) ||
+        s.transcripts.some(
+          (t) =>
+            trLabel(t).toLowerCase().includes(q) ||
+            (t.agentId ?? "").toLowerCase().includes(q) ||
+            (t.agentType ?? "").toLowerCase().includes(q),
+        )
       );
     });
   });
@@ -139,7 +151,7 @@
   <input
     class="grow"
     type="search"
-    placeholder="Search project, session id, model…"
+    placeholder="Search project, session id, model, worker…"
     bind:value={search}
   />
   <span class="count">{filtered.length} of {sessions.length} sessions</span>
@@ -170,15 +182,40 @@
         </tr>
       </thead>
       <tbody>
-        {#each sorted as s (`${s.source}:${s.id}`)}
+        {#each sorted as s (keyOf(s))}
+          {@const open = !!expanded[keyOf(s)]}
           <tr
             class="clickable"
             tabindex="0"
             onclick={() => onopen(s)}
             onkeydown={(e) => e.key === "Enter" && onopen(s)}
           >
-            <td><span class="badge {s.source}">{s.source}</span></td>
-            <td title={s.project ?? ""}>{projectName(s.project)}</td>
+            <td class="nowrap">
+              {#if s.subagentCount > 0}
+                <button
+                  class="chevron"
+                  aria-label={open ? "Collapse workers" : "Expand workers"}
+                  aria-expanded={open}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    expanded[keyOf(s)] = !open;
+                  }}
+                  onkeydown={(e) => e.stopPropagation()}>{open ? "▾" : "▸"}</button
+                >
+              {:else}
+                <span class="chevron-gap"></span>
+              {/if}
+              <span class="badge {s.source}">{s.source}</span>
+            </td>
+            <td title={s.project ?? ""}>
+              {projectName(s.project)}
+              {#if s.subagentCount > 0}
+                <span class="badge workers" title="{s.subagentCount} subagent transcripts">+{s.subagentCount} workers</span>
+              {/if}
+              {#if s.logDeleted}
+                <span class="badge muted-badge" title={LOG_DELETED_TIP}>log deleted</span>
+              {/if}
+            </td>
             <td class="ellipsis" title={s.models.join(", ")}>{s.models.join(", ") || "—"}</td>
             <td>{fmtDateTime(s.startedAt)}</td>
             <td class="num">{fmtDuration(durationMs(s.startedAt, s.endedAt))}</td>
@@ -198,6 +235,39 @@
               {/if}
             </td>
           </tr>
+          {#if open}
+            {#each s.transcripts as t, ti (ti)}
+              <tr class="sub">
+                <td colspan="2" class="sub-label">
+                  <span class="indent" title={t.filePath}>{trLabel(t)}</span>
+                  {#if t.isSubagent && t.agentType}
+                    <span class="tag">{t.agentType}</span>
+                  {/if}
+                  {#if t.logDeleted}
+                    <span class="badge muted-badge" title={LOG_DELETED_TIP}>log deleted</span>
+                  {/if}
+                </td>
+                <td class="ellipsis" title={t.models.join(", ")}>{t.models.join(", ") || "—"}</td>
+                <td>{fmtDateTime(t.startedAt)}</td>
+                <td class="num">{fmtDuration(durationMs(t.startedAt, t.endedAt))}</td>
+                <td class="num" title={fmtInt(t.usage.input)}>{fmtCompact(t.usage.input)}</td>
+                <td class="num" title={fmtInt(t.usage.output)}>{fmtCompact(t.usage.output)}</td>
+                <td class="num" title={fmtInt(t.usage.cacheCreation)}>{fmtCompact(t.usage.cacheCreation)}</td>
+                <td class="num" title={fmtInt(t.usage.cacheRead)}>{fmtCompact(t.usage.cacheRead)}</td>
+                <td class="num" title={fmtInt(totalTokens(t.usage))}>{fmtCompact(totalTokens(t.usage))}</td>
+                <td class="num">
+                  {#if t.costUsd == null}
+                    <span title="No price for {t.unpricedModels.join(', ') || t.models.join(', ')}">—</span>
+                  {:else}
+                    {fmtUsd(t.costUsd)}
+                    {#if t.unpricedModels.length > 0}
+                      <span class="badge warn" title="No price for {t.unpricedModels.join(', ')}">partial</span>
+                    {/if}
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          {/if}
         {:else}
           <tr><td colspan={columns.length} class="state">No sessions match the filters.</td></tr>
         {/each}
