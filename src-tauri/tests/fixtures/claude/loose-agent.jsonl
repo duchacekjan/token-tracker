@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":true,"agentId":"loose","sessionId":"sess-8888","cwd":"/home/dev/proj","timestamp":"2025-01-13T10:00:00.000Z","requestId":"req_l","message":{"id":"msg_l","model":"claude-sonnet-4-5","usage":{"input_tokens":5,"output_tokens":6}}}
