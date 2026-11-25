@@ -1,10 +1,10 @@
+pub mod aggregate;
 pub mod commands;
 pub mod discovery;
 pub mod model;
 pub mod parsers;
 pub mod pricing;
 
-use std::sync::RwLock;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -12,9 +12,9 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir()?;
-            app.manage(commands::AppState {
-                pricing: RwLock::new(pricing::PriceTable::load(&cache_dir)),
-            });
+            app.manage(commands::AppState::new(pricing::PriceTable::load(
+                &cache_dir,
+            )));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
