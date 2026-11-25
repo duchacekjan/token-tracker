@@ -32,7 +32,8 @@ if (!repo || !out) { console.error('usage: build-price-history.mjs --repo <path>
 
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] });
 
-const PREFIXES = ['claude-', 'gpt-5', 'gpt-4.1', 'gpt-4o', 'o1', 'o3', 'o4-mini', 'codex-'];
+const PREFIXES = ['claude-', 'gpt-5', 'gpt-4.1', 'gpt-4o', 'o1', 'o3', 'o4-mini', 'codex-', 'gpt-6'];
+const PROVIDER_PREFIX = 'openai.';
 const FIELDS = [
   ['input', 'input_cost_per_token'],
   ['output', 'output_cost_per_token'],
@@ -60,8 +61,14 @@ function state(i) {
   try {
     const j = JSON.parse(git('show', `${c.sha}:${c.path}`));
     s = {};
+    const lower = new Set(Object.keys(j).map((k) => k.toLowerCase()));
     for (const [k, v] of Object.entries(j)) {
-      const key = k.toLowerCase();
+      let key = k.toLowerCase();
+      if (key.startsWith(PROVIDER_PREFIX)) {
+        const bare = key.slice(PROVIDER_PREFIX.length);
+        if (lower.has(bare)) continue; // bare key wins
+        key = bare;
+      }
       if (key.includes('/') || !PREFIXES.some((p) => key.startsWith(p))) continue;
       if (!v || typeof v !== 'object') continue;
       if (v.input_cost_per_token == null || v.output_cost_per_token == null) continue;

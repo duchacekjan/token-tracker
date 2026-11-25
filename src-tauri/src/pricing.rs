@@ -28,9 +28,10 @@ const BUNDLED: &str = include_str!("../resources/price_history.json");
 const PRICES_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const LOCAL_FILE: &str = "price_history_local.json";
-const TRACKED_PREFIXES: [&str; 8] = [
-    "claude-", "gpt-5", "gpt-4.1", "gpt-4o", "o1", "o3", "o4-mini", "codex-",
+const TRACKED_PREFIXES: [&str; 9] = [
+    "claude-", "gpt-5", "gpt-4.1", "gpt-4o", "o1", "o3", "o4-mini", "codex-", "gpt-6",
 ];
+const PROVIDER_PREFIX: &str = "openai.";
 
 /// One price valid from `from` until the next entry. `None` cache = input price.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -114,9 +115,16 @@ struct RawEntry {
 /// Current LiteLLM prices for tracked, un-prefixed keys.
 fn parse_current(s: &str) -> anyhow::Result<BTreeMap<String, Current>> {
     let raw: HashMap<String, serde_json::Value> = serde_json::from_str(s)?;
+    let lower: std::collections::HashSet<String> = raw.keys().map(|k| k.to_lowercase()).collect();
     let mut out = BTreeMap::new();
     for (key, val) in raw {
-        let key = key.to_lowercase();
+        let mut key = key.to_lowercase();
+        if let Some(bare) = key.strip_prefix(PROVIDER_PREFIX) {
+            if lower.contains(bare) {
+                continue; // bare key wins
+            }
+            key = bare.to_string();
+        }
         if key.contains('/') || !TRACKED_PREFIXES.iter().any(|p| key.starts_with(p)) {
             continue;
         }
@@ -443,6 +451,27 @@ mod tests {
         assert_eq!(inp("claude-x-1-foo"), None);
         assert_eq!(inp("claude-opus-4-6-foo"), None);
         assert_eq!(inp("claude"), None);
+    }
+
+    #[test]
+    fn openai_dot_prefix_is_stripped() {
+        let json = r#"{
+            "openai.gpt-6-luna": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7,
+                "cache_creation_input_token_cost": 1.25e-7, "cache_read_input_token_cost": 1e-8},
+            "openai.gpt-5-codex": {"input_cost_per_token": 2e-7, "output_cost_per_token": 6e-7},
+            "openai.gpt-5.1-codex": {"input_cost_per_token": 3e-7, "output_cost_per_token": 7e-7},
+            "openai/gpt-viaprefix": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7}
+        }"#;
+        let cur = parse_current(json).unwrap();
+        let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t = table(diff_new_entries(&cur, &BTreeMap::new(), now));
+        let inp = |m: &str| t.price_for(m, None).map(|p| p.input);
+        assert_eq!(inp("gpt-6-luna"), Some(1e-7));
+        assert_eq!(inp("gpt-5-codex"), Some(2e-7));
+        assert_eq!(inp("gpt-5.1-codex"), Some(3e-7));
+        assert_eq!(inp("gpt-viaprefix"), None);
     }
 
     #[test]
