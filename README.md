@@ -124,7 +124,7 @@ Each model has a timeline of price entries. An entry has a `from` date and is va
 2. The name without trailing tags such as `[1m]`.
 3. The name without a trailing `-YYYYMMDD` date.
 
-For each name, the app tries the name as is, then with the `anthropic/` prefix, then with the `openai/` prefix. There is no other matching. A model that matches none of these is unpriced and shows `—`.
+There is no other matching. A model that matches none of these is unpriced and shows `—`.
 
 **Refresh prices**
 
@@ -133,6 +133,12 @@ For each name, the app tries the name as is, then with the `anthropic/` prefix, 
 - Saves the result to `price_history_local.json` in the app cache directory, using a temp file and a rename, and uses it right away. If the save fails, the new prices are still used and the error is reported in the pricing status.
 - A corrupt `price_history_local.json` is replaced on refresh. At startup, a corrupt file is ignored, the bundled timeline is used, and the error is reported.
 - The pricing status is `online` after a refresh, `cache` when the local file was loaded at startup, and `bundled` otherwise.
+
+**Caveats**
+
+- **Refresh dates.** A price added by Refresh prices gets `from` set to the refresh time, not the date the vendor changed the price. Turns between an actual price change and the next refresh are priced at the old rate. The same applies until an app release regenerates the bundled history.
+- **Corrupt local file.** A corrupt `price_history_local.json` is ignored at startup. The bundled timeline is used and the error is shown in the pricing status. The next refresh replaces the file, so earlier local entries are lost.
+- **Weekly sampling.** The bundled timeline samples LiteLLM weekly and bisects changes to the exact commit. A price that changes and reverts within one week can be missed.
 
 **Regenerate the bundled timeline** (maintainers)
 
