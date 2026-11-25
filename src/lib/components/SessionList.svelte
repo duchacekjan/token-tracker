@@ -116,14 +116,15 @@
   });
 
   const totals = $derived.by(() => {
-    const t = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, cost: 0, unpriced: 0 };
+    const t = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, cost: 0, unpriced: 0, partial: 0 };
     for (const s of filtered) {
       t.input += s.usage.input;
       t.output += s.usage.output;
       t.cacheCreation += s.usage.cacheCreation;
       t.cacheRead += s.usage.cacheRead;
       t.cost += s.costUsd ?? 0;
-      if (s.unpricedModels.length > 0 || s.costUsd == null) t.unpriced++;
+      if (s.costUsd == null) t.unpriced++;
+      else if (s.unpricedModels.length > 0) t.partial++;
     }
     return t;
   });
@@ -215,11 +216,16 @@
           >
           <td class="num">
             {fmtUsd(totals.cost)}
-            {#if totals.unpriced > 0}
+            {#if totals.unpriced > 0 || totals.partial > 0}
               <span
                 class="badge warn"
-                title="{totals.unpriced} session(s) have unpriced models; total excludes them"
-                >+{totals.unpriced} unpriced</span
+                title="Fully unpriced sessions ({totals.unpriced}) are excluded from the total. Partially priced sessions ({totals.partial}) contribute only their priced turns."
+                >+{[
+                  totals.unpriced > 0 ? `${totals.unpriced} unpriced` : '',
+                  totals.partial > 0 ? `${totals.partial} partial` : ''
+                ]
+                  .filter(Boolean)
+                  .join(', ')}</span
               >
             {/if}
           </td>
