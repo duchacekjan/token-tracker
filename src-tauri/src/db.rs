@@ -10,7 +10,26 @@ use std::time::{Duration, UNIX_EPOCH};
 /// Bump when parser output semantics change; forces a reparse of every file.
 pub const PARSER_VERSION: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 2;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
+
+/// DB was written by a newer app version (`user_version` > supported).
+#[derive(Debug)]
+pub struct NewerSchema {
+    pub found: i64,
+    pub supported: i64,
+}
+
+impl std::fmt::Display for NewerSchema {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "db schema version {} is newer than supported {}",
+            self.found, self.supported
+        )
+    }
+}
+
+impl std::error::Error for NewerSchema {}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SyncStats {
@@ -106,7 +125,11 @@ impl Store {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version > SCHEMA_VERSION {
-            anyhow::bail!("db schema version {version} is newer than supported {SCHEMA_VERSION}");
+            return Err(NewerSchema {
+                found: version,
+                supported: SCHEMA_VERSION,
+            }
+            .into());
         }
         if version < 1 {
             let tx = self.conn.transaction()?;

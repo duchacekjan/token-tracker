@@ -1,4 +1,4 @@
-use crate::db::Store;
+use crate::db::{NewerSchema, Store};
 use std::path::{Path, PathBuf};
 
 /// `<path><suffix>` (appends to the full file name, e.g. `x.sqlite-wal`).
@@ -24,7 +24,8 @@ fn quarantine(path: &Path) -> Result<PathBuf, String> {
     Ok(broken)
 }
 
-/// Open the DB at `path`. On failure, rename the bad file aside and create a
+/// Open the DB at `path`. A DB from a newer schema is left untouched and an
+/// in-memory store is used. On other failures, rename the bad file aside and create a
 /// fresh DB; if that also fails, fall back to in-memory. Warning is `Some`
 /// whenever recovery happened.
 pub fn open_store_with_recovery(path: &Path) -> (Store, Option<String>) {
@@ -32,6 +33,20 @@ pub fn open_store_with_recovery(path: &Path) -> (Store, Option<String>) {
         Ok(store) => return (store, None),
         Err(e) => e,
     };
+    if let Some(n) = first_err.downcast_ref::<NewerSchema>() {
+        // Good DB from a newer build: leave it untouched.
+        eprintln!("db open failed ({first_err}); using in-memory db");
+        let store = Store::open_in_memory().expect("in-memory sqlite");
+        return (
+            store,
+            Some(format!(
+                "Database was created by a newer Token Tracker version (schema v{}, this build \
+                 supports v{}). Using a temporary in-memory database; nothing is saved. Update \
+                 the app to use your history.",
+                n.found, n.supported
+            )),
+        );
+    }
     eprintln!("db open failed ({first_err}); attempting recovery");
 
     let moved = if path.is_file() {
@@ -115,6 +130,30 @@ mod tests {
         assert!(w.contains(&main[0].display().to_string()));
         assert_eq!(std::fs::read(main[0]).unwrap()[..4], *b"this");
         assert!(p.exists());
+        assert!(s.load_all().unwrap().is_empty());
+    }
+
+    #[test]
+    fn newer_schema_untouched_and_in_memory() {
+        let td = tempfile::tempdir().unwrap();
+        let p = td.path().join("t.sqlite");
+        let newer = crate::db::SCHEMA_VERSION + 1;
+        drop(Store::open(&p).unwrap());
+        {
+            let c = rusqlite::Connection::open(&p).unwrap();
+            c.pragma_update(None, "user_version", newer).unwrap();
+        }
+        let before = std::fs::read(&p).unwrap();
+        let (s, w) = open_store_with_recovery(&p);
+        let w = w.expect("warning");
+        assert!(w.contains(&format!("v{newer}")));
+        assert!(w.contains(&format!("v{}", crate::db::SCHEMA_VERSION)));
+        assert_eq!(std::fs::read(&p).unwrap(), before);
+        let names: Vec<_> = std::fs::read_dir(td.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!names.iter().any(|n| n.contains(".broken-")), "{names:?}");
         assert!(s.load_all().unwrap().is_empty());
     }
 
