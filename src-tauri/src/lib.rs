@@ -1,5 +1,6 @@
 pub mod aggregate;
 pub mod commands;
+pub mod db;
 pub mod discovery;
 pub mod model;
 pub mod parsers;
