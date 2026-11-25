@@ -165,46 +165,26 @@ pub async fn list_sessions(
     Ok(summaries)
 }
 
-fn inside_dirs(path: &Path, dirs: &[PathBuf]) -> bool {
-    let Ok(canon) = path.canonicalize() else {
-        return false;
-    };
-    dirs.iter()
-        .filter_map(|d| d.canonicalize().ok())
-        .any(|d| canon.starts_with(d))
-}
-
-fn is_jsonl(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("jsonl"))
-}
-
 #[tauri::command]
 pub async fn get_session(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    file_path: String,
+    source: Source,
+    id: String,
 ) -> Result<SessionDetail, String> {
-    let stored = lock(&state.sessions).get(&file_path).cloned();
+    let find = |m: &HashMap<String, ParsedSession>| {
+        m.values()
+            .filter(|s| s.source == source && s.id == id)
+            .min_by(|a, b| (a.is_subagent, &a.file_path).cmp(&(b.is_subagent, &b.file_path)))
+            .cloned()
+    };
+    let stored = find(&lock(&state.sessions));
     let session = match stored {
         Some(s) => s,
         None => {
-            let settings = discovery::load_settings(&config_dir(&app)?);
-            let (cd, xd) = discovery::effective_dirs(&settings);
-            let path = PathBuf::from(&file_path);
-            if !inside_dirs(&path, &cd) && !inside_dirs(&path, &xd) {
-                return Err("path outside log directories".into());
-            }
-            if !is_jsonl(&path) {
-                return Err("not a .jsonl file".into());
-            }
             let sessions = scan_all(&app).await?;
             store_sessions(&state, &sessions);
-            sessions
-                .into_iter()
-                .find(|s| s.file_path == file_path)
-                .ok_or_else(|| "session not found".to_string())?
+            find(&lock(&state.sessions)).ok_or_else(|| "session not found".to_string())?
         }
     };
     let prices = state.pricing.read().map_err(|e| e.to_string())?;
@@ -253,6 +233,11 @@ mod tests {
             project: None,
             file_path: String::new(),
             turns: vec![],
+            agent_id: None,
+            is_subagent: false,
+            agent_label: None,
+            agent_type: None,
+            log_deleted: false,
         }
     }
 
@@ -292,14 +277,6 @@ mod tests {
         prune_cache(&mut c, &live);
         assert!(c.contains_key(Path::new("/a")));
         assert!(!c.contains_key(Path::new("/b")));
-    }
-
-    #[test]
-    fn jsonl_extension_check() {
-        assert!(is_jsonl(Path::new("/x/a.jsonl")));
-        assert!(is_jsonl(Path::new("/x/a.JSONL")));
-        assert!(!is_jsonl(Path::new("/x/a.json")));
-        assert!(!is_jsonl(Path::new("/x/jsonl")));
     }
 
     #[test]

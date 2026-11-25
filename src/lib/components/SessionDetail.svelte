@@ -22,13 +22,13 @@
   let error = $state<string | null>(null);
 
   $effect(() => {
-    const path = session.filePath;
+    const { source, id } = session;
     loading = true;
     error = null;
     detail = null;
-    getSession(path)
+    getSession(source, id)
       .then((d) => {
-        if (path === session.filePath) detail = d;
+        if (source === session.source && id === session.id) detail = d;
       })
       .catch((e) => (error = String(e)))
       .finally(() => (loading = false));

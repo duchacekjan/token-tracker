@@ -51,6 +51,19 @@ pub struct ParsedSession {
     pub project: Option<String>,
     pub file_path: String,
     pub turns: Vec<ParsedTurn>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub is_subagent: bool,
+    /// Subagent `meta.json` description.
+    #[serde(default)]
+    pub agent_label: Option<String>,
+    /// Subagent `meta.json` agentType.
+    #[serde(default)]
+    pub agent_type: Option<String>,
+    /// Always false from parsers; a DB layer sets it later.
+    #[serde(default)]
+    pub log_deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +73,27 @@ pub struct Turn {
     pub model: String,
     pub usage: TokenUsage,
     pub cost_usd: Option<f64>,
+    /// Index into `SessionSummary::transcripts`.
+    #[serde(default)]
+    pub transcript: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptSummary {
+    pub file_path: String,
+    pub agent_id: Option<String>,
+    pub agent_label: Option<String>,
+    pub agent_type: Option<String>,
+    pub is_subagent: bool,
+    pub log_deleted: bool,
+    pub models: Vec<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub usage: TokenUsage,
+    pub cost_usd: Option<f64>,
+    pub unpriced_models: Vec<String>,
+    pub turn_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +110,11 @@ pub struct SessionSummary {
     pub cost_usd: Option<f64>,
     pub unpriced_models: Vec<String>,
     pub turn_count: usize,
+    pub subagent_count: usize,
+    /// True only if ALL transcripts' logs are deleted.
+    pub log_deleted: bool,
+    /// Main first, then subagents by started_at.
+    pub transcripts: Vec<TranscriptSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

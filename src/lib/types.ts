@@ -13,6 +13,24 @@ export interface Turn {
   model: string;
   usage: TokenUsage;
   costUsd: number | null;
+  /** Index into SessionSummary.transcripts. */
+  transcript: number;
+}
+
+export interface TranscriptSummary {
+  filePath: string;
+  agentId: string | null;
+  agentLabel: string | null;
+  agentType: string | null;
+  isSubagent: boolean;
+  logDeleted: boolean;
+  models: string[];
+  startedAt: string | null;
+  endedAt: string | null;
+  usage: TokenUsage;
+  costUsd: number | null;
+  unpricedModels: string[];
+  turnCount: number;
 }
 
 export interface SessionSummary {
@@ -27,6 +45,11 @@ export interface SessionSummary {
   costUsd: number | null;
   unpricedModels: string[];
   turnCount: number;
+  subagentCount: number;
+  /** True only if ALL transcripts' logs are deleted. */
+  logDeleted: boolean;
+  /** Main first, then subagents by startedAt. */
+  transcripts: TranscriptSummary[];
 }
 
 export interface SessionDetail {

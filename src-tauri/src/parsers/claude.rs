@@ -15,6 +15,9 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
 
     let mut session_id: Option<String> = None;
     let mut project: Option<String> = None;
+    let mut agent_id: Option<String> = None;
+    let mut first_sidechain: Option<bool> = None;
+    let mut usage_sidechain = false;
     let mut turns: Vec<ParsedTurn> = Vec::new();
     let mut by_key: HashMap<String, usize> = HashMap::new();
 
@@ -35,6 +38,14 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
             project = v.get("cwd").and_then(Value::as_str).map(String::from);
         }
 
+        if agent_id.is_none() {
+            agent_id = v.get("agentId").and_then(Value::as_str).map(String::from);
+        }
+        let sidechain = v.get("isSidechain").and_then(Value::as_bool);
+        if first_sidechain.is_none() {
+            first_sidechain = sidechain;
+        }
+
         if v.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
@@ -50,6 +61,8 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         if model == "<synthetic>" {
             continue;
         }
+
+        usage_sidechain |= sidechain == Some(true);
 
         let msg_id = msg.get("id").and_then(Value::as_str);
         let req_id = v.get("requestId").and_then(Value::as_str);
@@ -95,13 +108,27 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
             .unwrap_or_default()
     });
 
+    let meta = read_meta(path);
+    let meta_str = |k: &str| meta.as_ref()?.get(k)?.as_str().map(String::from);
+
     Ok(ParsedSession {
         id,
         source: Source::Claude,
         project,
         file_path: path.to_string_lossy().into_owned(),
         turns,
+        agent_id,
+        is_subagent: usage_sidechain || first_sidechain == Some(true),
+        agent_label: meta_str("description"),
+        agent_type: meta_str("agentType"),
+        log_deleted: false,
     })
+}
+
+/// Sibling `<stem>.meta.json`; None if missing or invalid.
+fn read_meta(path: &Path) -> Option<Value> {
+    let text = std::fs::read_to_string(path.with_extension("meta.json")).ok()?;
+    serde_json::from_str(&text).ok().filter(Value::is_object)
 }
 
 #[cfg(test)]
@@ -178,6 +205,42 @@ mod tests {
         let s = parse_file(&fixture("no-session-id.jsonl")).unwrap();
         assert_eq!(s.id, "no-session-id");
         assert_eq!(s.turns[0].dedup_key.as_deref(), Some("msg_9"));
+    }
+
+    const SUB_DIR: &str = "11111111-2222-4333-8444-555555555555/subagents";
+
+    #[test]
+    fn main_transcript_not_subagent() {
+        let s = parse_file(&fixture("normal.jsonl")).unwrap();
+        assert!(!s.is_subagent);
+        assert!(s.agent_id.is_none() && s.agent_label.is_none() && s.agent_type.is_none());
+        assert!(!s.log_deleted);
+    }
+
+    #[test]
+    fn subagent_with_meta() {
+        let s = parse_file(&fixture(&format!("{SUB_DIR}/agent-abc.jsonl"))).unwrap();
+        assert_eq!(s.id, "11111111-2222-4333-8444-555555555555");
+        assert!(s.is_subagent);
+        assert_eq!(s.agent_id.as_deref(), Some("abc"));
+        assert_eq!(s.agent_label.as_deref(), Some("Scaffold Tauri Svelte app"));
+        assert_eq!(s.agent_type.as_deref(), Some("itixo:itixo-builder"));
+        assert_eq!(s.turns.len(), 1);
+    }
+
+    #[test]
+    fn subagent_missing_meta() {
+        let s = parse_file(&fixture(&format!("{SUB_DIR}/agent-nometa.jsonl"))).unwrap();
+        assert!(s.is_subagent);
+        assert_eq!(s.agent_id.as_deref(), Some("nometa"));
+        assert!(s.agent_label.is_none() && s.agent_type.is_none());
+    }
+
+    #[test]
+    fn subagent_invalid_meta() {
+        let s = parse_file(&fixture(&format!("{SUB_DIR}/agent-badmeta.jsonl"))).unwrap();
+        assert!(s.is_subagent);
+        assert!(s.agent_label.is_none() && s.agent_type.is_none());
     }
 
     #[test]

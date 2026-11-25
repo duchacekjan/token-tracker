@@ -165,6 +165,11 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         project: meta_cwd.or(ctx_cwd),
         file_path: path.to_string_lossy().into_owned(),
         turns,
+        agent_id: None,
+        is_subagent: false,
+        agent_label: None,
+        agent_type: None,
+        log_deleted: false,
     })
 }
 

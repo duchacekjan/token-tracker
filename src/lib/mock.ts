@@ -3,7 +3,9 @@ import type {
   SessionSummary,
   Settings,
   SettingsView,
+  Source,
   TokenUsage,
+  TranscriptSummary,
   Turn,
 } from "./types";
 
@@ -32,6 +34,7 @@ function mkTurns(start: number, models: string[], n: number, scale: number): Tur
     };
     const rate = rateOf(model);
     turns.push({
+      transcript: 0,
       timestamp: at(start + i * 2),
       model,
       usage,
@@ -46,56 +49,109 @@ function mkTurns(start: number, models: string[], n: number, scale: number): Tur
   return turns;
 }
 
+const sumUsage = (turns: Turn[]): TokenUsage => {
+  const u: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, reasoning: 0 };
+  for (const t of turns) {
+    u.input += t.usage.input;
+    u.output += t.usage.output;
+    u.cacheCreation += t.usage.cacheCreation;
+    u.cacheRead += t.usage.cacheRead;
+    u.reasoning += t.usage.reasoning;
+  }
+  return u;
+};
+
+const sumCost = (turns: Turn[]): number | null => {
+  const priced = turns.filter((t) => t.costUsd != null);
+  return priced.length ? priced.reduce((a, t) => a + (t.costUsd ?? 0), 0) : null;
+};
+
+interface TSpec {
+  models: string[];
+  n: number;
+  scale: number;
+  start: number;
+  label?: string;
+  agentType?: string;
+  logDeleted?: boolean;
+}
+
 function build(
   id: string,
   source: "claude" | "codex",
   project: string,
-  start: number,
-  models: string[],
-  n: number,
-  scale: number,
+  main: TSpec,
+  subs: TSpec[] = [],
 ): SessionDetail {
-  const turns = mkTurns(start, models, n, scale);
-  const usage: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, reasoning: 0 };
-  let cost = 0;
-  let anyPriced = false;
-  for (const t of turns) {
-    usage.input += t.usage.input;
-    usage.output += t.usage.output;
-    usage.cacheCreation += t.usage.cacheCreation;
-    usage.cacheRead += t.usage.cacheRead;
-    usage.reasoning += t.usage.reasoning;
-    if (t.costUsd != null) {
-      cost += t.costUsd;
-      anyPriced = true;
-    }
-  }
+  const dir =
+    source === "claude"
+      ? `/home/dev/.claude/projects/${project.replace(/\//g, "-")}`
+      : "/home/dev/.codex/sessions/2025/01";
+  const specs = [main, ...subs];
+  const turns: Turn[] = [];
+  const transcripts: TranscriptSummary[] = specs.map((sp, i) => {
+    const isSub = i > 0;
+    const ts = mkTurns(sp.start, sp.models, sp.n, sp.scale).map((t) => ({ ...t, transcript: i }));
+    turns.push(...ts);
+    return {
+      filePath: isSub
+        ? `${dir}/${id}/subagents/agent-a${i}.jsonl`
+        : source === "claude"
+          ? `${dir}/${id}.jsonl`
+          : `${dir}/rollout-${id}.jsonl`,
+      agentId: isSub ? `a${i}` : null,
+      agentLabel: sp.label ?? null,
+      agentType: sp.agentType ?? null,
+      isSubagent: isSub,
+      logDeleted: sp.logDeleted ?? false,
+      models: sp.models,
+      startedAt: ts[0].timestamp,
+      endedAt: ts[ts.length - 1].timestamp,
+      usage: sumUsage(ts),
+      costUsd: sumCost(ts),
+      unpricedModels: sp.models.filter((m) => rateOf(m) == null),
+      turnCount: ts.length,
+    };
+  });
+  turns.sort((a, b) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""));
+  const models = [...new Set(specs.flatMap((sp) => sp.models))];
+  const stamps = turns.map((t) => t.timestamp).filter((t): t is string => t != null);
   const summary: SessionSummary = {
     id,
     source,
     project,
-    filePath:
-      source === "claude"
-        ? `/home/dev/.claude/projects/${project.replace(/\//g, "-")}/${id}.jsonl`
-        : `/home/dev/.codex/sessions/2025/01/rollout-${id}.jsonl`,
+    filePath: transcripts[0].filePath,
     models,
-    startedAt: turns[0].timestamp,
-    endedAt: turns[turns.length - 1].timestamp,
-    usage,
-    costUsd: anyPriced ? cost : null,
+    startedAt: stamps[0] ?? null,
+    endedAt: stamps[stamps.length - 1] ?? null,
+    usage: sumUsage(turns),
+    costUsd: sumCost(turns),
     unpricedModels: models.filter((m) => rateOf(m) == null),
-    turnCount: n,
+    turnCount: turns.length,
+    subagentCount: subs.length,
+    logDeleted: transcripts.every((t) => t.logDeleted),
+    transcripts,
   };
   return { summary, turns };
 }
 
 const details: SessionDetail[] = [
-  build("3f9a1c52-aaaa-4b1e-9d11-000000000001", "claude", "/home/dev/work/token-tracker", 0, ["claude-sonnet-4-5"], 42, 1),
-  build("7b21de90-bbbb-4c2f-8e22-000000000002", "claude", "/home/dev/work/api-gateway", 600, ["claude-opus-4-1", "claude-haiku-4-5"], 18, 2),
-  build("c0de1234-cccc-4d3a-8f33-000000000003", "claude", "/home/dev/side/blog", 1500, ["claude-sonnet-4-5", "claude-experimental-x"], 9, 0.6),
-  build("019a-dddd-0001", "codex", "/home/dev/work/api-gateway", 2300, ["gpt-5-codex"], 25, 1.4),
-  build("019a-eeee-0002", "codex", "/home/dev/side/dotfiles", 3100, ["gpt-5-codex"], 6, 0.4),
-  build("019a-ffff-0003", "codex", "/home/dev/side/preview-test", 3600, ["codex-next-preview"], 5, 0.5),
+  build(
+    "3f9a1c52-aaaa-4b1e-9d11-000000000001",
+    "claude",
+    "/home/dev/work/token-tracker",
+    { models: ["claude-sonnet-4-5"], n: 42, scale: 1, start: 0 },
+    [
+      { models: ["claude-sonnet-4-5"], n: 14, scale: 0.8, start: 4, label: "Scaffold app", agentType: "itixo:itixo-builder" },
+      { models: ["claude-sonnet-4-5", "claude-haiku-4-5"], n: 20, scale: 0.7, start: 12, label: "Implement parser", agentType: "itixo:itixo-builder" },
+      { models: ["claude-haiku-4-5"], n: 8, scale: 0.4, start: 30, label: "Review diff", agentType: "itixo:itixo-reviewer" },
+    ],
+  ),
+  build("7b21de90-bbbb-4c2f-8e22-000000000002", "claude", "/home/dev/work/api-gateway", { models: ["claude-opus-4-1", "claude-haiku-4-5"], n: 18, scale: 2, start: 600, logDeleted: true }),
+  build("c0de1234-cccc-4d3a-8f33-000000000003", "claude", "/home/dev/side/blog", { models: ["claude-sonnet-4-5", "claude-experimental-x"], n: 9, scale: 0.6, start: 1500 }),
+  build("019a-dddd-0001", "codex", "/home/dev/work/api-gateway", { models: ["gpt-5-codex"], n: 25, scale: 1.4, start: 2300 }),
+  build("019a-eeee-0002", "codex", "/home/dev/side/dotfiles", { models: ["gpt-5-codex"], n: 6, scale: 0.4, start: 3100 }),
+  build("019a-ffff-0003", "codex", "/home/dev/side/preview-test", { models: ["codex-next-preview"], n: 5, scale: 0.5, start: 3600 }),
 ];
 
 let mockSettings: Settings = { extraClaudeDirs: ["/mnt/backup/.claude/projects"], extraCodexDirs: [] };
@@ -117,9 +173,9 @@ const settingsView = (): SettingsView => ({
 
 export const mockApi = {
   listSessions: () => delay(details.map((d) => d.summary)),
-  getSession: (filePath: string) => {
-    const d = details.find((x) => x.summary.filePath === filePath);
-    return d ? delay(d) : Promise.reject(new Error(`session not found: ${filePath}`));
+  getSession: (source: Source, id: string) => {
+    const d = details.find((x) => x.summary.source === source && x.summary.id === id);
+    return d ? delay(d) : Promise.reject(new Error(`session not found: ${source}:${id}`));
   },
   getSettings: () => delay(settingsView()),
   saveSettings: (s: Settings) => {

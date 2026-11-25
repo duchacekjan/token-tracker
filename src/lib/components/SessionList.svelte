@@ -170,7 +170,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each sorted as s (s.filePath)}
+        {#each sorted as s (`${s.source}:${s.id}`)}
           <tr
             class="clickable"
             tabindex="0"

@@ -5,6 +5,7 @@ import type {
   SessionSummary,
   Settings,
   SettingsView,
+  Source,
 } from "./types";
 import { mockApi } from "./mock";
 
@@ -13,8 +14,8 @@ const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 export const listSessions = (): Promise<SessionSummary[]> =>
   inTauri ? invoke<SessionSummary[]>("list_sessions") : mockApi.listSessions();
 
-export const getSession = (filePath: string): Promise<SessionDetail> =>
-  inTauri ? invoke<SessionDetail>("get_session", { filePath }) : mockApi.getSession(filePath);
+export const getSession = (source: Source, id: string): Promise<SessionDetail> =>
+  inTauri ? invoke<SessionDetail>("get_session", { source, id }) : mockApi.getSession(source, id);
 
 export const getSettings = (): Promise<SettingsView> =>
   inTauri ? invoke<SettingsView>("get_settings") : mockApi.getSettings();

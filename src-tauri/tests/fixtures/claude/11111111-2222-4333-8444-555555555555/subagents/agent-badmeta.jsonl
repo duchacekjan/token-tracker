@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":true,"agentId":"badmeta","sessionId":"11111111-2222-4333-8444-555555555555","cwd":"/home/dev/proj","timestamp":"2025-01-11T10:00:05.000Z","requestId":"req_badmeta","message":{"id":"msg_badmeta","model":"claude-sonnet-4-5","usage":{"input_tokens":7,"output_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":100}}}

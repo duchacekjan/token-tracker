@@ -1,5 +1,6 @@
 use crate::model::{
-    ParsedSession, ParsedTurn, SessionDetail, SessionSummary, Source, TokenUsage, Turn,
+    ParsedSession, ParsedTurn, SessionDetail, SessionSummary, Source, TokenUsage,
+    TranscriptSummary, Turn,
 };
 use crate::parsers::{claude, codex};
 use crate::pricing::PriceTable;
@@ -48,18 +49,38 @@ pub fn summarize(s: &ParsedSession, prices: &PriceTable) -> SessionSummary {
         }
     }
     let stamps = || s.turns.iter().filter_map(|t| t.timestamp);
+    let models: Vec<String> = models.into_iter().map(String::from).collect();
+    let unpriced: Vec<String> = unpriced.into_iter().collect();
+    let transcript = TranscriptSummary {
+        file_path: s.file_path.clone(),
+        agent_id: s.agent_id.clone(),
+        agent_label: s.agent_label.clone(),
+        agent_type: s.agent_type.clone(),
+        is_subagent: s.is_subagent,
+        log_deleted: s.log_deleted,
+        models: models.clone(),
+        started_at: stamps().min(),
+        ended_at: stamps().max(),
+        usage: usage.clone(),
+        cost_usd: cost,
+        unpriced_models: unpriced.clone(),
+        turn_count: s.turns.len(),
+    };
     SessionSummary {
         id: s.id.clone(),
         source: s.source,
         project: s.project.clone(),
         file_path: s.file_path.clone(),
-        models: models.into_iter().map(String::from).collect(),
+        models,
         started_at: stamps().min(),
         ended_at: stamps().max(),
         usage,
         cost_usd: cost,
-        unpriced_models: unpriced.into_iter().collect(),
+        unpriced_models: unpriced,
         turn_count: s.turns.len(),
+        subagent_count: usize::from(s.is_subagent),
+        log_deleted: s.log_deleted,
+        transcripts: vec![transcript],
     }
 }
 
@@ -74,6 +95,7 @@ pub fn detail(s: &ParsedSession, prices: &PriceTable) -> SessionDetail {
                 model: t.model.clone(),
                 usage: t.usage.clone(),
                 cost_usd: turn_cost(t, prices),
+                transcript: 0,
             })
             .collect(),
     }
@@ -148,6 +170,11 @@ mod tests {
             project: None,
             file_path: path.into(),
             turns,
+            agent_id: None,
+            is_subagent: false,
+            agent_label: None,
+            agent_type: None,
+            log_deleted: false,
         }
     }
 
