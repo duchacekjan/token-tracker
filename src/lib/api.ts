@@ -6,15 +6,21 @@ import type {
   Settings,
   SettingsView,
 } from "./types";
+import { mockApi } from "./mock";
 
-export const listSessions = () => invoke<SessionSummary[]>("list_sessions");
+const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-export const getSession = (filePath: string) =>
-  invoke<SessionDetail>("get_session", { filePath });
+export const listSessions = (): Promise<SessionSummary[]> =>
+  inTauri ? invoke<SessionSummary[]>("list_sessions") : mockApi.listSessions();
 
-export const getSettings = () => invoke<SettingsView>("get_settings");
+export const getSession = (filePath: string): Promise<SessionDetail> =>
+  inTauri ? invoke<SessionDetail>("get_session", { filePath }) : mockApi.getSession(filePath);
 
-export const saveSettings = (settings: Settings) =>
-  invoke<SettingsView>("save_settings", { settings });
+export const getSettings = (): Promise<SettingsView> =>
+  inTauri ? invoke<SettingsView>("get_settings") : mockApi.getSettings();
 
-export const refreshPricing = () => invoke<PricingStatus>("refresh_pricing");
+export const saveSettings = (settings: Settings): Promise<SettingsView> =>
+  inTauri ? invoke<SettingsView>("save_settings", { settings }) : mockApi.saveSettings(settings);
+
+export const refreshPricing = (): Promise<PricingStatus> =>
+  inTauri ? invoke<PricingStatus>("refresh_pricing") : mockApi.refreshPricing();
