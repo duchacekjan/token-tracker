@@ -5,6 +5,7 @@ pub mod discovery;
 pub mod model;
 pub mod parsers;
 pub mod pricing;
+pub mod startup;
 
 use tauri::Manager;
 
@@ -14,13 +15,11 @@ pub fn run() {
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir()?;
             let db_path = app.path().app_data_dir()?.join("token-tracker.sqlite");
-            let store = db::Store::open(&db_path).unwrap_or_else(|e| {
-                eprintln!("db open failed ({e}); using in-memory store");
-                db::Store::open_in_memory().expect("in-memory sqlite")
-            });
+            let (store, db_warning) = startup::open_store_with_recovery(&db_path);
             app.manage(commands::AppState::new(
                 pricing::PriceTable::load(&cache_dir),
                 store,
+                db_warning,
             ));
             Ok(())
         })
@@ -30,6 +29,7 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::refresh_pricing,
+            commands::get_db_warning,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

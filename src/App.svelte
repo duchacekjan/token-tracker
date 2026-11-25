@@ -1,6 +1,6 @@
 <script lang="ts">
   import "./app.css";
-  import { listSessions } from "./lib/api";
+  import { getDbWarning, listSessions } from "./lib/api";
   import type { SessionSummary } from "./lib/types";
   import SessionList from "./lib/components/SessionList.svelte";
   import SessionDetail from "./lib/components/SessionDetail.svelte";
@@ -25,6 +25,11 @@
   }
   load();
 
+  let dbWarning = $state<string | null>(null);
+  getDbWarning()
+    .then((w) => (dbWarning = w))
+    .catch(() => {});
+
   function open(s: SessionSummary) {
     selected = s;
     view = "detail";
@@ -41,6 +46,14 @@
       onclick={() => (view = view === "settings" ? "list" : "settings")}>⚙</button
     >
   </header>
+  {#if dbWarning}
+    <div class="db-warning" role="alert">
+      <span>{dbWarning}</span>
+      <button class="icon" title="Dismiss" aria-label="Dismiss" onclick={() => (dbWarning = null)}
+        >✕</button
+      >
+    </div>
+  {/if}
   <main class="content">
     {#if view === "settings"}
       <SettingsPanel onback={() => (view = "list")} onpricing={load} />
@@ -51,3 +64,20 @@
     {/if}
   </main>
 </div>
+
+<style>
+  .db-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    background: var(--warn-bg);
+    color: var(--warn);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9em;
+  }
+  .db-warning span {
+    flex: 1;
+    overflow-wrap: anywhere;
+  }
+</style>

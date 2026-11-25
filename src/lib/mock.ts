@@ -182,6 +182,9 @@ export const mockApi = {
     mockSettings = structuredClone(s);
     return delay(settingsView());
   },
+  // To preview the banner, return a string instead of null, e.g.
+  // delay("The database could not be opened. It was renamed to /home/dev/token-tracker.sqlite.broken-20250101-120000 ...")
+  getDbWarning: (): Promise<string | null> => delay(null),
   refreshPricing: () => {
     pricingUpdated = new Date().toISOString();
     return delay(settingsView().pricing, 600);

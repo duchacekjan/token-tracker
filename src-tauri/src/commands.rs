@@ -25,16 +25,24 @@ pub struct AppState {
     pub store: Mutex<Store>,
     /// Groups from the last list run, for detail lookups.
     pub groups: Mutex<HashMap<GroupKey, SessionGroup>>,
+    /// Set at startup when the DB had to be recovered or is in-memory only.
+    pub db_warning: Option<String>,
 }
 
 impl AppState {
-    pub fn new(pricing: PriceTable, store: Store) -> Self {
+    pub fn new(pricing: PriceTable, store: Store, db_warning: Option<String>) -> Self {
         Self {
             pricing: RwLock::new(pricing),
             store: Mutex::new(store),
             groups: Mutex::new(HashMap::new()),
+            db_warning,
         }
     }
+}
+
+#[tauri::command]
+pub fn get_db_warning(state: State<'_, AppState>) -> Option<String> {
+    state.db_warning.clone()
 }
 
 fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {

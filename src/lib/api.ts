@@ -23,5 +23,8 @@ export const getSettings = (): Promise<SettingsView> =>
 export const saveSettings = (settings: Settings): Promise<SettingsView> =>
   inTauri ? invoke<SettingsView>("save_settings", { settings }) : mockApi.saveSettings(settings);
 
+export const getDbWarning = (): Promise<string | null> =>
+  inTauri ? invoke<string | null>("get_db_warning") : mockApi.getDbWarning();
+
 export const refreshPricing = (): Promise<PricingStatus> =>
   inTauri ? invoke<PricingStatus>("refresh_pricing") : mockApi.refreshPricing();
