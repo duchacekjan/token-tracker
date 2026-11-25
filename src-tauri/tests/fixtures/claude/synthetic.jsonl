@@ -1,0 +1,3 @@
+{"type":"assistant","sessionId":"sess-3333","cwd":"/home/dev/proj","timestamp":"2025-01-10T10:00:05.000Z","requestId":"req_1","message":{"id":"msg_1","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}
+{"type":"assistant","sessionId":"sess-3333","cwd":"/home/dev/proj","timestamp":"2025-01-10T10:00:06.000Z","requestId":"req_2","message":{"id":"msg_2","model":"claude-sonnet-4-5","usage":{"input_tokens":3,"output_tokens":4}}}
+{"type":"assistant","sessionId":"sess-3333","cwd":"/home/dev/proj","timestamp":"2025-01-10T10:00:07.000Z","requestId":"req_3","message":{"id":"msg_3","model":"claude-sonnet-4-5"}}
