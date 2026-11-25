@@ -174,13 +174,18 @@ fn strip_tags(m: &str) -> &str {
 }
 
 fn strip_date(m: &str) -> &str {
-    if m.len() > 9 {
-        let (head, tail) = m.split_at(m.len() - 9);
-        if tail.starts_with('-') && tail[1..].bytes().all(|b| b.is_ascii_digit()) {
-            return head;
+    let Some(i) = m.len().checked_sub(9).filter(|&i| i > 0) else {
+        return m;
+    };
+    // `get` returns None when `i` is not a char boundary (non-ASCII input).
+    match (m.get(..i), m.get(i..)) {
+        (Some(head), Some(tail))
+            if tail.starts_with('-') && tail[1..].bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            head
         }
+        _ => m,
     }
-    m
 }
 
 fn parse_bundled() -> anyhow::Result<History> {
@@ -200,9 +205,17 @@ fn read_local(dir: &Path) -> anyhow::Result<Option<History>> {
 async fn persist_local(dir: &Path, h: &History) -> anyhow::Result<()> {
     let body = serde_json::to_vec(h)?;
     tokio::fs::create_dir_all(dir).await?;
-    let tmp = dir.join(format!("{LOCAL_FILE}.tmp"));
-    tokio::fs::write(&tmp, body).await?;
-    if let Err(e) = tokio::fs::rename(&tmp, dir.join(LOCAL_FILE)).await {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = dir.join(format!("{LOCAL_FILE}.{}.{nanos}.tmp", std::process::id()));
+    let res = async {
+        tokio::fs::write(&tmp, body).await?;
+        tokio::fs::rename(&tmp, dir.join(LOCAL_FILE)).await
+    }
+    .await;
+    if let Err(e) = res {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(e.into());
     }
@@ -316,13 +329,7 @@ impl PriceTable {
         let no_tags = strip_tags(&m);
         let no_date = strip_date(no_tags);
         let get = |k: &str| self.models.get(k).filter(|v| !v.is_empty());
-        let timeline = [m.as_str(), no_tags, no_date]
-            .into_iter()
-            .find_map(|base| {
-                get(base)
-                    .or_else(|| get(&format!("anthropic/{base}")))
-                    .or_else(|| get(&format!("openai/{base}")))
-            })?;
+        let timeline = [m.as_str(), no_tags, no_date].into_iter().find_map(get)?;
         let entry = match at {
             None => timeline.last()?,
             Some(t) => {
@@ -418,20 +425,17 @@ mod tests {
     #[test]
     fn lookup_chain() {
         let e = vec![entry("2025-01-01T00:00:00Z", 1.0, 1.0)];
-        let mut e2 = e.clone();
-        e2[0].input = 2.0;
-        let mut e3 = e.clone();
-        e3[0].input = 3.0;
         let t = table(models(&[
-            ("claude-x-1", e),
-            ("anthropic/claude-viaprefix", e2),
-            ("openai/gpt-viaprefix", e3),
+            ("claude-x-1", e.clone()),
+            ("anthropic/claude-viaprefix", e.clone()),
+            ("openai/gpt-viaprefix", e),
         ]));
         let inp = |m: &str| t.price_for(m, None).map(|p| p.input);
         assert_eq!(inp("claude-x-1"), Some(1.0));
         assert_eq!(inp("CLAUDE-X-1"), Some(1.0));
-        assert_eq!(inp("claude-viaprefix"), Some(2.0));
-        assert_eq!(inp("gpt-viaprefix"), Some(3.0));
+        // no namespace fallback
+        assert_eq!(inp("claude-viaprefix"), None);
+        assert_eq!(inp("gpt-viaprefix"), None);
         assert_eq!(inp("claude-x-1[1m]"), Some(1.0));
         assert_eq!(inp("claude-x-1-20250101"), Some(1.0));
         assert_eq!(inp("claude-x-1-20250101[1m]"), Some(1.0));
@@ -439,6 +443,29 @@ mod tests {
         assert_eq!(inp("claude-x-1-foo"), None);
         assert_eq!(inp("claude-opus-4-6-foo"), None);
         assert_eq!(inp("claude"), None);
+    }
+
+    #[test]
+    fn non_ascii_models_no_panic() {
+        let t = timeline();
+        for m in [
+            "modèle-2025010",
+            "modèle-20250101",
+            "ž",
+            "žžžžžžžžžž",
+            "🦀",
+            "🦀🦀🦀",
+            "claude-x-1-é[1m",
+            "é]",
+            "[é]",
+            "",
+        ] {
+            assert!(t.price_for(m, None).is_none(), "{m}");
+        }
+        assert_eq!(strip_date("modèle-2025010"), "modèle-2025010");
+        assert_eq!(strip_date("abc"), "abc");
+        assert_eq!(strip_date("-20250101"), "-20250101");
+        assert_eq!(strip_date("a-20250101"), "a");
     }
 
     #[test]
@@ -617,6 +644,11 @@ mod tests {
         persist_local(&sub, &h).await.unwrap();
         let back = read_local(&sub).unwrap().unwrap();
         assert_eq!(back.models["m"], h.models["m"]);
-        assert!(!sub.join(format!("{LOCAL_FILE}.tmp")).exists());
+        persist_local(&sub, &h).await.unwrap();
+        let names: Vec<_> = std::fs::read_dir(&sub)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec![LOCAL_FILE.to_string()]);
     }
 }
