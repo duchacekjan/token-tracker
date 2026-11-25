@@ -1,36 +1,38 @@
-use crate::aggregate;
+use crate::aggregate::{self, SessionGroup};
+use crate::db::{Store, SyncStats};
 use crate::discovery::{self, Settings, SettingsView};
-use crate::model::{ParsedSession, SessionDetail, SessionSummary, Source};
+use crate::model::{SessionDetail, SessionSummary, Source};
 use crate::parsers::{claude, codex};
 use crate::pricing::{PriceTable, PricingStatus};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
-use std::time::SystemTime;
+use std::sync::{Mutex, MutexGuard, RwLock};
 use tauri::{Manager, State};
 
-/// One cached parse per file path; valid only while mtime and len match.
-pub struct CacheEntry {
-    mtime: Option<SystemTime>,
-    len: u64,
-    session: Arc<ParsedSession>,
+/// Group map key. `Source` is not `Hash`, so use its stable name.
+type GroupKey = (&'static str, String);
+
+fn group_key(source: Source, id: &str) -> GroupKey {
+    let src = match source {
+        Source::Claude => "claude",
+        Source::Codex => "codex",
+    };
+    (src, id.to_string())
 }
-type ParseCache = HashMap<PathBuf, CacheEntry>;
 
 pub struct AppState {
     pub pricing: RwLock<PriceTable>,
-    /// Deduped sessions from the last scan, keyed by file path.
-    pub sessions: Mutex<HashMap<String, ParsedSession>>,
-    /// Raw parse results, one entry per file path.
-    pub parse_cache: Mutex<ParseCache>,
+    pub store: Mutex<Store>,
+    /// Groups from the last list run, for detail lookups.
+    pub groups: Mutex<HashMap<GroupKey, SessionGroup>>,
 }
 
 impl AppState {
-    pub fn new(pricing: PriceTable) -> Self {
+    pub fn new(pricing: PriceTable, store: Store) -> Self {
         Self {
             pricing: RwLock::new(pricing),
-            sessions: Mutex::new(HashMap::new()),
-            parse_cache: Mutex::new(HashMap::new()),
+            store: Mutex::new(store),
+            groups: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -47,60 +49,6 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Return the cached parse for `path` if mtime+len match, else run `parse`
-/// and replace the entry.
-fn refresh_entry<F>(
-    cache: &mut ParseCache,
-    path: &Path,
-    mtime: Option<SystemTime>,
-    len: u64,
-    parse: F,
-) -> Option<Arc<ParsedSession>>
-where
-    F: FnOnce() -> Option<ParsedSession>,
-{
-    if let Some(e) = cache.get(path) {
-        if e.mtime == mtime && e.len == len {
-            return Some(Arc::clone(&e.session));
-        }
-    }
-    let session = Arc::new(parse()?);
-    cache.insert(
-        path.to_path_buf(),
-        CacheEntry {
-            mtime,
-            len,
-            session: Arc::clone(&session),
-        },
-    );
-    Some(session)
-}
-
-/// Drop entries whose path is not in `live`.
-fn prune_cache(cache: &mut ParseCache, live: &HashSet<&Path>) {
-    cache.retain(|p, _| live.contains(p.as_path()));
-}
-
-/// Parse with cache. Returns an owned copy because dedup mutates sessions.
-fn parse_cached(cache: &Mutex<ParseCache>, source: Source, path: &Path) -> Option<ParsedSession> {
-    let m = std::fs::metadata(path).ok()?;
-    let (mtime, len) = (m.modified().ok(), m.len());
-    if let Some(e) = lock(cache).get(path) {
-        if e.mtime == mtime && e.len == len {
-            return Some((*e.session).clone());
-        }
-    }
-    // Parse outside the lock so other scans are not blocked.
-    let parsed = match source {
-        Source::Claude => claude::parse_file(path),
-        Source::Codex => codex::parse_file(path),
-    }
-    .ok()?;
-    let out = parsed.clone();
-    refresh_entry(&mut lock(cache), path, mtime, len, || Some(parsed));
-    Some(out)
-}
-
 fn settings_view(app: &tauri::AppHandle, state: &AppState) -> Result<SettingsView, String> {
     let settings = discovery::load_settings(&config_dir(app)?);
     let (c, x) = discovery::effective_dirs(&settings);
@@ -114,8 +62,28 @@ fn settings_view(app: &tauri::AppHandle, state: &AppState) -> Result<SettingsVie
     })
 }
 
-/// Full scan (cross-session Claude dedup applies), refreshing the parse cache.
-async fn scan_all(app: &tauri::AppHandle) -> Result<Vec<ParsedSession>, String> {
+fn parse_any(source: Source, path: &Path) -> anyhow::Result<crate::model::ParsedSession> {
+    match source {
+        Source::Claude => claude::parse_file(path),
+        Source::Codex => codex::parse_file(path),
+    }
+}
+
+/// sync -> load_all -> build. Pure over its inputs (no Tauri state).
+fn run_pipeline(
+    store: &mut Store,
+    claude_files: &[PathBuf],
+    codex_files: &[PathBuf],
+    prices: &PriceTable,
+) -> anyhow::Result<(SyncStats, Vec<SessionGroup>, Vec<SessionSummary>)> {
+    let stats = store.sync(claude_files, codex_files, parse_any)?;
+    let sessions = store.load_all()?;
+    let (groups, summaries) = aggregate::build(sessions, prices);
+    Ok((stats, groups, summaries))
+}
+
+/// Sync the DB with disk, rebuild groups in state, return summaries.
+async fn refresh(app: &tauri::AppHandle) -> Result<Vec<SessionSummary>, String> {
     let settings = discovery::load_settings(&config_dir(app)?);
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -123,46 +91,24 @@ async fn scan_all(app: &tauri::AppHandle) -> Result<Vec<ParsedSession>, String> 
         let (cd, xd) = discovery::effective_dirs(&settings);
         let cf = discovery::find_jsonl(&cd);
         let xf = discovery::find_jsonl(&xd);
-        let sessions =
-            aggregate::scan_with(&cf, &xf, |src, p| parse_cached(&state.parse_cache, src, p));
-        let live: HashSet<&Path> = cf.iter().chain(xf.iter()).map(PathBuf::as_path).collect();
-        prune_cache(&mut lock(&state.parse_cache), &live);
-        sessions
+        let (_, groups, summaries) = {
+            let prices = state.pricing.read().map_err(|e| e.to_string())?;
+            run_pipeline(&mut lock(&state.store), &cf, &xf, &prices).map_err(|e| e.to_string())?
+        };
+        let map: HashMap<GroupKey, SessionGroup> = groups
+            .into_iter()
+            .map(|g| (group_key(g.source, &g.id), g))
+            .collect();
+        *lock(&state.groups) = map;
+        Ok(summaries)
     })
     .await
-    .map_err(|e| e.to_string())
-}
-
-fn store_sessions(state: &AppState, sessions: &[ParsedSession]) {
-    let map: HashMap<String, ParsedSession> = sessions
-        .iter()
-        .map(|s| (s.file_path.clone(), s.clone()))
-        .collect();
-    *lock(&state.sessions) = map;
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn list_sessions(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Vec<SessionSummary>, String> {
-    let sessions = scan_all(&app).await?;
-
-    let mut summaries: Vec<SessionSummary> = {
-        let prices = state.pricing.read().map_err(|e| e.to_string())?;
-        sessions
-            .iter()
-            .map(|s| aggregate::summarize(s, &prices))
-            .collect()
-    };
-    summaries.sort_by(|a, b| match (a.started_at, b.started_at) {
-        (Some(x), Some(y)) => y.cmp(&x),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-    store_sessions(&state, &sessions);
-    Ok(summaries)
+pub async fn list_sessions(app: tauri::AppHandle) -> Result<Vec<SessionSummary>, String> {
+    refresh(&app).await
 }
 
 #[tauri::command]
@@ -172,23 +118,20 @@ pub async fn get_session(
     source: Source,
     id: String,
 ) -> Result<SessionDetail, String> {
-    let find = |m: &HashMap<String, ParsedSession>| {
-        m.values()
-            .filter(|s| s.source == source && s.id == id)
-            .min_by(|a, b| (a.is_subagent, &a.file_path).cmp(&(b.is_subagent, &b.file_path)))
-            .cloned()
+    let key = group_key(source, &id);
+    let detail = |state: &AppState| -> Result<Option<SessionDetail>, String> {
+        let groups = lock(&state.groups);
+        let Some(g) = groups.get(&key) else {
+            return Ok(None);
+        };
+        let prices = state.pricing.read().map_err(|e| e.to_string())?;
+        Ok(Some(aggregate::detail_group(g, &prices)))
     };
-    let stored = find(&lock(&state.sessions));
-    let session = match stored {
-        Some(s) => s,
-        None => {
-            let sessions = scan_all(&app).await?;
-            store_sessions(&state, &sessions);
-            find(&lock(&state.sessions)).ok_or_else(|| "session not found".to_string())?
-        }
-    };
-    let prices = state.pricing.read().map_err(|e| e.to_string())?;
-    Ok(aggregate::detail(&session, &prices))
+    if let Some(d) = detail(&state)? {
+        return Ok(d);
+    }
+    refresh(&app).await?;
+    detail(&state)?.ok_or_else(|| "session not found".to_string())
 }
 
 #[tauri::command]
@@ -225,59 +168,7 @@ pub async fn refresh_pricing(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn sess(id: &str) -> ParsedSession {
-        ParsedSession {
-            id: id.into(),
-            source: Source::Claude,
-            project: None,
-            file_path: String::new(),
-            turns: vec![],
-            agent_id: None,
-            is_subagent: false,
-            agent_label: None,
-            agent_type: None,
-            log_deleted: false,
-        }
-    }
-
-    #[test]
-    fn refresh_reuses_when_unchanged() {
-        let mut c = ParseCache::new();
-        let p = Path::new("/a.jsonl");
-        let first = refresh_entry(&mut c, p, None, 10, || Some(sess("1"))).unwrap();
-        let second = refresh_entry(&mut c, p, None, 10, || panic!("must not reparse")).unwrap();
-        assert!(Arc::ptr_eq(&first, &second));
-    }
-
-    #[test]
-    fn refresh_replaces_single_entry_on_change() {
-        let mut c = ParseCache::new();
-        let p = Path::new("/a.jsonl");
-        refresh_entry(&mut c, p, None, 10, || Some(sess("old")));
-        let s = refresh_entry(&mut c, p, None, 20, || Some(sess("new"))).unwrap();
-        assert_eq!(s.id, "new");
-        assert_eq!(c.len(), 1);
-        assert_eq!(c[p].len, 20);
-    }
-
-    #[test]
-    fn refresh_failed_parse_keeps_nothing_new() {
-        let mut c = ParseCache::new();
-        assert!(refresh_entry(&mut c, Path::new("/a"), None, 1, || None).is_none());
-        assert!(c.is_empty());
-    }
-
-    #[test]
-    fn prune_drops_missing_paths() {
-        let mut c = ParseCache::new();
-        refresh_entry(&mut c, Path::new("/a"), None, 1, || Some(sess("a")));
-        refresh_entry(&mut c, Path::new("/b"), None, 1, || Some(sess("b")));
-        let live: HashSet<&Path> = [Path::new("/a")].into_iter().collect();
-        prune_cache(&mut c, &live);
-        assert!(c.contains_key(Path::new("/a")));
-        assert!(!c.contains_key(Path::new("/b")));
-    }
+    use std::sync::Arc;
 
     #[test]
     fn lock_recovers_poisoned() {
@@ -289,5 +180,29 @@ mod tests {
         })
         .join();
         assert_eq!(*lock(&m), 1);
+    }
+
+    #[test]
+    fn pipeline_second_run_parses_nothing() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let cf = discovery::find_jsonl(&[root.join("claude")]);
+        let xf = discovery::find_jsonl(&[root.join("codex")]);
+        assert!(!cf.is_empty() && !xf.is_empty());
+        let prices = PriceTable::load(Path::new("/nonexistent-cache-dir"));
+        let mut store = Store::open_in_memory().unwrap();
+
+        let (s1, groups, sums) = run_pipeline(&mut store, &cf, &xf, &prices).unwrap();
+        assert!(s1.parsed > 0);
+        assert_eq!(groups.len(), sums.len());
+        assert!(groups.iter().any(|g| g.source == Source::Codex));
+        assert!(sums
+            .iter()
+            .any(|s| s.source == Source::Claude && s.subagent_count > 0));
+
+        let (s2, groups2, sums2) = run_pipeline(&mut store, &cf, &xf, &prices).unwrap();
+        assert_eq!(s2.parsed, 0);
+        assert_eq!(s2.unchanged, s1.parsed);
+        assert_eq!(groups2.len(), groups.len());
+        assert_eq!(sums2.len(), sums.len());
     }
 }

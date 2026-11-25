@@ -13,9 +13,15 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir()?;
-            app.manage(commands::AppState::new(pricing::PriceTable::load(
-                &cache_dir,
-            )));
+            let db_path = app.path().app_data_dir()?.join("token-tracker.sqlite");
+            let store = db::Store::open(&db_path).unwrap_or_else(|e| {
+                eprintln!("db open failed ({e}); using in-memory store");
+                db::Store::open_in_memory().expect("in-memory sqlite")
+            });
+            app.manage(commands::AppState::new(
+                pricing::PriceTable::load(&cache_dir),
+                store,
+            ));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

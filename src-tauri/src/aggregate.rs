@@ -2,11 +2,9 @@ use crate::model::{
     ParsedSession, ParsedTurn, SessionDetail, SessionSummary, Source, TokenUsage,
     TranscriptSummary, Turn,
 };
-use crate::parsers::{claude, codex};
 use crate::pricing::PriceTable;
 use chrono::{DateTime, Utc};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
 
 /// Drop turns whose dedup key was already seen in an earlier session.
 /// Sessions must be sorted oldest-first. Keyless turns are kept.
@@ -82,23 +80,6 @@ pub fn summarize(s: &ParsedSession, prices: &PriceTable) -> SessionSummary {
         subagent_count: usize::from(s.is_subagent),
         log_deleted: s.log_deleted,
         transcripts: vec![transcript],
-    }
-}
-
-pub fn detail(s: &ParsedSession, prices: &PriceTable) -> SessionDetail {
-    SessionDetail {
-        summary: summarize(s, prices),
-        turns: s
-            .turns
-            .iter()
-            .map(|t| Turn {
-                timestamp: t.timestamp,
-                model: t.model.clone(),
-                usage: t.usage.clone(),
-                cost_usd: turn_cost(t, prices),
-                transcript: 0,
-            })
-            .collect(),
     }
 }
 
@@ -266,54 +247,11 @@ pub fn build(
     pairs.into_iter().unzip()
 }
 
-fn parse_one(source: Source, path: &Path) -> Option<ParsedSession> {
-    match source {
-        Source::Claude => claude::parse_file(path).ok(),
-        Source::Codex => codex::parse_file(path).ok(),
-    }
-}
-
-/// Like `scan`, with a caller-supplied parser (lets callers add caching).
-pub fn scan_with<F>(
-    claude_files: &[PathBuf],
-    codex_files: &[PathBuf],
-    mut parse: F,
-) -> Vec<ParsedSession>
-where
-    F: FnMut(Source, &Path) -> Option<ParsedSession>,
-{
-    let mut claude_sessions: Vec<ParsedSession> = claude_files
-        .iter()
-        .filter_map(|p| parse(Source::Claude, p))
-        .filter(|s| !s.turns.is_empty())
-        .collect();
-    claude_sessions.sort_by(|a, b| {
-        let first = |s: &ParsedSession| s.turns.iter().filter_map(|t| t.timestamp).min();
-        first(a)
-            .cmp(&first(b))
-            .then_with(|| a.file_path.cmp(&b.file_path))
-    });
-    dedup_claude(&mut claude_sessions);
-    claude_sessions.retain(|s| !s.turns.is_empty());
-
-    let mut out = claude_sessions;
-    out.extend(
-        codex_files
-            .iter()
-            .filter_map(|p| parse(Source::Codex, p))
-            .filter(|s| !s.turns.is_empty()),
-    );
-    out
-}
-
-pub fn scan(claude_files: &[PathBuf], codex_files: &[PathBuf]) -> Vec<ParsedSession> {
-    scan_with(claude_files, codex_files, parse_one)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
+    use std::path::Path;
 
     fn turn(model: &str, key: Option<&str>, secs: i64, out: u64) -> ParsedTurn {
         ParsedTurn {
@@ -401,9 +339,6 @@ mod tests {
             .cost("claude-sonnet-4-5", &s.turns[1].usage, s.turns[1].timestamp)
             .unwrap();
         assert!((sum.cost_usd.unwrap() - 2.0 * one).abs() < 1e-12);
-        let d = detail(&s, &p);
-        assert!(d.turns[0].cost_usd.is_none());
-        assert!(d.turns[1].cost_usd.is_some());
     }
 
     #[test]
@@ -414,22 +349,39 @@ mod tests {
         assert_eq!(sum.unpriced_models, vec!["zzz-unknown-model"]);
     }
 
-    #[test]
-    fn scan_fixtures() {
+    fn parse_fixtures(dir: &str, src: Source) -> Vec<ParsedSession> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let c = crate::discovery::find_jsonl(&[root.join("claude")]);
-        let x = crate::discovery::find_jsonl(&[root.join("codex")]);
-        assert!(!c.is_empty() && !x.is_empty());
-        let all = scan(&c, &x);
-        assert!(all.iter().any(|s| s.source == Source::Claude));
-        assert!(all.iter().any(|s| s.source == Source::Codex));
-        assert!(all.iter().all(|s| !s.turns.is_empty()));
-        let p = table();
-        let total: u64 = all.iter().map(|s| summarize(s, &p).usage.total()).sum();
-        assert!(total > 0);
-        // no dedup key repeats across Claude sessions
+        let files = crate::discovery::find_jsonl(&[root.join(dir)]);
+        assert!(!files.is_empty());
+        files
+            .iter()
+            .map(|p| match src {
+                Source::Claude => crate::parsers::claude::parse_file(p).unwrap(),
+                Source::Codex => crate::parsers::codex::parse_file(p).unwrap(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn build_fixtures() {
+        let mut all = parse_fixtures("claude", Source::Claude);
+        all.extend(parse_fixtures("codex", Source::Codex));
+        let (groups, sums) = build(all, &table());
+        assert_eq!(groups.len(), sums.len());
+        assert!(sums.iter().any(|s| s.source == Source::Claude));
+        assert!(sums.iter().any(|s| s.source == Source::Codex));
+        assert!(groups
+            .iter()
+            .flat_map(|g| &g.transcripts)
+            .all(|s| !s.turns.is_empty()));
+        assert!(sums.iter().map(|s| s.usage.total()).sum::<u64>() > 0);
+        // no dedup key repeats across Claude transcripts
         let mut seen = HashSet::new();
-        for s in all.iter().filter(|s| s.source == Source::Claude) {
+        for s in groups
+            .iter()
+            .flat_map(|g| &g.transcripts)
+            .filter(|s| s.source == Source::Claude)
+        {
             let own: HashSet<_> = s.turns.iter().filter_map(|t| t.dedup_key.clone()).collect();
             assert!(seen.is_disjoint(&own));
             seen.extend(own);
@@ -599,9 +551,7 @@ mod tests {
 
     #[test]
     fn build_fixtures_groups_subagents() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let c = crate::discovery::find_jsonl(&[root.join("claude")]);
-        let all = scan(&c, &[]);
+        let all = parse_fixtures("claude", Source::Claude);
         let (groups, sums) = build(all, &table());
         assert_eq!(groups.len(), sums.len());
         let with_sub: Vec<_> = sums.iter().filter(|s| s.subagent_count > 0).collect();
