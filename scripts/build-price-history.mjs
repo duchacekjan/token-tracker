@@ -70,7 +70,10 @@ function state(i) {
         key = bare;
       }
       if (key.includes('/') || !PREFIXES.some((p) => key.startsWith(p))) continue;
+      if (key.startsWith('gpt-oss')) continue;
       if (!v || typeof v !== 'object') continue;
+      // bare keys served via Bedrock are excluded; openai.-prefixed keys are the allowed source
+      if (k.toLowerCase() === key && String(v.litellm_provider ?? '').startsWith('bedrock')) continue;
       if (v.input_cost_per_token == null || v.output_cost_per_token == null) continue;
       const e = {};
       for (const [o, f] of FIELDS) e[o] = typeof v[f] === 'number' ? v[f] : null;

@@ -119,13 +119,27 @@ fn parse_current(s: &str) -> anyhow::Result<BTreeMap<String, Current>> {
     let mut out = BTreeMap::new();
     for (key, val) in raw {
         let mut key = key.to_lowercase();
+        let mut prefixed = false;
         if let Some(bare) = key.strip_prefix(PROVIDER_PREFIX) {
             if lower.contains(bare) {
                 continue; // bare key wins
             }
             key = bare.to_string();
+            prefixed = true;
         }
         if key.contains('/') || !TRACKED_PREFIXES.iter().any(|p| key.starts_with(p)) {
+            continue;
+        }
+        if key.starts_with("gpt-oss") {
+            continue;
+        }
+        // bare keys served via Bedrock are excluded; openai.-prefixed keys are the allowed source
+        if !prefixed
+            && val
+                .get("litellm_provider")
+                .and_then(|p| p.as_str())
+                .is_some_and(|p| p.starts_with("bedrock"))
+        {
             continue;
         }
         let Ok(e) = serde_json::from_value::<RawEntry>(val) else {
@@ -460,7 +474,14 @@ mod tests {
                 "cache_creation_input_token_cost": 1.25e-7, "cache_read_input_token_cost": 1e-8},
             "openai.gpt-5-codex": {"input_cost_per_token": 2e-7, "output_cost_per_token": 6e-7},
             "openai.gpt-5.1-codex": {"input_cost_per_token": 3e-7, "output_cost_per_token": 7e-7},
-            "openai/gpt-viaprefix": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7}
+            "openai/gpt-viaprefix": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7},
+            "openai.gpt-oss-120b-1:0": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7},
+            "openai.gpt-oss-safeguard-20b": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7},
+            "gpt-oss-20b": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7},
+            "anthropic.claude-opus-4-6-v1": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7},
+            "amazon.nova-pro-v1:0": {"input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7},
+            "claude-sonnet-4-5-20250929-v1:0": {"litellm_provider": "bedrock",
+                "input_cost_per_token": 1e-7, "output_cost_per_token": 5e-7}
         }"#;
         let cur = parse_current(json).unwrap();
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
@@ -472,6 +493,13 @@ mod tests {
         assert_eq!(inp("gpt-5-codex"), Some(2e-7));
         assert_eq!(inp("gpt-5.1-codex"), Some(3e-7));
         assert_eq!(inp("gpt-viaprefix"), None);
+        assert_eq!(inp("gpt-oss-120b-1:0"), None);
+        assert_eq!(inp("gpt-oss-safeguard-20b"), None);
+        assert_eq!(inp("gpt-oss-20b"), None);
+        assert_eq!(inp("anthropic.claude-opus-4-6-v1"), None);
+        assert_eq!(inp("claude-opus-4-6-v1"), None);
+        assert_eq!(inp("amazon.nova-pro-v1:0"), None);
+        assert_eq!(inp("claude-sonnet-4-5-20250929-v1:0"), None);
     }
 
     #[test]
