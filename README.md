@@ -9,7 +9,7 @@ It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app only 
 - **Session list.** Shows the sessions found in the log directories, with token totals and estimated cost.
 - **Session detail.** Shows the token usage of one session.
 - **Settings.** Adds extra log directories for Claude Code or Codex CLI.
-- **Pricing refresh.** Downloads the current model price table. See [Pricing](#pricing).
+- **Pricing refresh.** Downloads current model prices and adds changes to the price history. See [Pricing](#pricing).
 
 ## Prerequisites
 
@@ -100,20 +100,57 @@ Session detail uses the result from the last scan. If the file was not in that s
 
 ## Pricing
 
-Prices come from LiteLLM's [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm).
+Each turn is priced at the LiteLLM rate that was valid at the turn's timestamp. Rates come from LiteLLM's [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm).
 
-- **On startup**, the app loads the cached copy (`litellm_prices.json` in the app cache directory). If there is no cache, it uses the bundled snapshot at `src-tauri/resources/bundled_prices.json`. If the cache cannot be read, it uses the bundled snapshot and reports the error.
-- **Refresh prices** downloads the current file from GitHub (20-second timeout), saves it to the cache, and uses it right away.
+**Price timeline**
+
+Each model has a timeline of price entries. An entry has a `from` date and is valid until the next entry starts.
+
+- The bundled timeline is `src-tauri/resources/price_history.json`. It is built from the git history of LiteLLM's price file. A `from` date is the date of the LiteLLM commit that first had that price. This can lag the vendor's actual price change or model release.
+- Refresh prices adds entries to a local timeline. At startup, the local timeline is merged with the bundled one.
+- When merging, consecutive entries with the same price are collapsed into one.
+- Only these model families are kept: `claude-`, `gpt-5`, `gpt-4.1`, `gpt-4o`, `o1`, `o3`, `o4-mini`, `codex-`. LiteLLM keys that contain `/` are skipped.
 - Entries without both an input and an output price are ignored. A missing cache-write or cache-read price uses the input price.
 
-**Model name matching** is case-insensitive:
+**Which price a turn gets**
+
+- The latest entry whose `from` is on or before the turn's timestamp.
+- A turn before the model's first entry uses the first entry.
+- A turn with no timestamp uses the latest entry.
+
+**Model name matching** is case-insensitive. The app tries these names in order and uses the first one that has a timeline:
 
 1. The exact name.
 2. The name without trailing tags such as `[1m]`.
 3. The name without a trailing `-YYYYMMDD` date.
-4. If none of these match, the longest price key (at least 5 characters) that the name starts with.
 
-Steps 1 to 3 also try the `anthropic/` and `openai/` prefixes.
+For each name, the app tries the name as is, then with the `anthropic/` prefix, then with the `openai/` prefix. There is no other matching. A model that matches none of these is unpriced and shows `—`.
+
+**Refresh prices**
+
+- Downloads the current LiteLLM price file from GitHub (20-second timeout). Startup does not download anything.
+- For each tracked model that is new, or whose price differs from its latest entry, adds one entry dated with the refresh time.
+- Saves the result to `price_history_local.json` in the app cache directory, using a temp file and a rename, and uses it right away. If the save fails, the new prices are still used and the error is reported in the pricing status.
+- A corrupt `price_history_local.json` is replaced on refresh. At startup, a corrupt file is ignored, the bundled timeline is used, and the error is reported.
+- The pricing status is `online` after a refresh, `cache` when the local file was loaded at startup, and `bundled` otherwise.
+
+**Regenerate the bundled timeline** (maintainers)
+
+1. Make a blobless clone of LiteLLM. The clone keeps the full commit history and fetches file contents as needed:
+
+   ```sh
+   git clone --filter=blob:none https://github.com/BerriAI/litellm /path/to/litellm
+   ```
+
+2. From the project root, run:
+
+   ```sh
+   npm run prices:history -- --repo /path/to/litellm --out src-tauri/resources/price_history.json
+   ```
+
+   The script follows the price file through its past paths (`git log --follow`), samples one commit per week, and bisects where tracked prices change. Each `from` is therefore the first commit with the new price.
+
+3. Rebuild the app. The file is compiled in with `include_str!`.
 
 **Cost formula**
 
@@ -124,7 +161,14 @@ cost = input × input price
      + cache read × cache-read price
 ```
 
-Prices are flat per token. Tiered long-context prices are not applied.
+Each turn is priced separately, using the price for its timestamp. Prices are flat per token. Tiered long-context prices are not applied.
+
+**Session and total costs**
+
+- A session's cost is the sum of its priced turns. If no turn has a price, the cost shows `—` and the session is fully unpriced.
+- If some turns have a price, the cost is shown with a `partial` badge. The badge tooltip names the unpriced models.
+- The footer total sums the sessions that match the current source filter and search. Fully unpriced sessions are excluded. Partially priced sessions add only their priced turns.
+- The footer shows a badge such as `+2 unpriced, 1 partial` when any session is unpriced or partial. Its tooltip explains both counts.
 
 **Costs are estimates.** They use API list prices. Subscription plans are not billed per token, so the totals will not match a subscription bill. Models without a price show `—`.
 
@@ -134,19 +178,21 @@ Prices are flat per token. Tiered long-context prices are not applied.
 .
 ├── LICENSE
 ├── package.json
+├── scripts/
+│   └── build-price-history.mjs   rebuilds the bundled price timeline
 ├── src/                          Svelte 5 frontend
 └── src-tauri/
     ├── Cargo.toml
     ├── tauri.conf.json
     ├── resources/
-    │   └── bundled_prices.json   fallback price table
+    │   └── price_history.json     bundled price timeline
     └── src/
         ├── lib.rs                app setup and command registration
         ├── commands.rs           Tauri commands called by the frontend
         ├── aggregate.rs          cross-session deduplication, summaries and detail
         ├── discovery.rs          log directories, JSONL scan, settings
         ├── model.rs              shared data types
-        ├── pricing.rs            price table, lookup and cost
+        ├── pricing.rs            price timeline, lookup and cost
         └── parsers/
             ├── claude.rs         Claude Code log parser
             └── codex.rs          Codex CLI log parser
