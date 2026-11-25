@@ -2,12 +2,12 @@
 
 Token Tracker is a desktop app that reads session logs from Claude Code and OpenAI Codex CLI and shows token usage and estimated USD cost for each session.
 
-It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app only reads log files.
+It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app reads log files. Parsed token data is kept in a local SQLite database.
 
 ## What it does
 
-- **Session list.** Shows the sessions found in the log directories, with token totals and estimated cost.
-- **Session detail.** Shows the token usage of one session.
+- **Session list.** Shows the sessions found in the log directories, with token totals and estimated cost. Claude Code worker transcripts are grouped under their parent session.
+- **Session detail.** Shows the token usage of one session, broken down by transcript.
 - **Settings.** Adds extra log directories for Claude Code or Codex CLI.
 - **Pricing refresh.** Downloads current model prices and adds changes to the price history. See [Pricing](#pricing).
 
@@ -51,7 +51,7 @@ npm run tauri build   # build a release bundle for your platform
 - If `CODEX_HOME` is set and not empty, the app reads `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions`.
 - Otherwise, the app reads `~/.codex/sessions` and `~/.codex/archived_sessions`.
 
-Only directories that exist are used. Each one is scanned recursively for files ending in `.jsonl` (case-insensitive). Symbolic links are not followed.
+Only directories that exist are used. Each one is scanned recursively for files ending in `.jsonl` (case-insensitive). Symbolic links are not followed. Claude Code worker transcripts are found by the same scan. See [Sessions and worker transcripts](#sessions-and-worker-transcripts).
 
 **Extra directories**
 
@@ -73,11 +73,24 @@ Extra directories are stored in `settings.json` in the app config directory:
 
 If `settings.json` is missing or invalid, the app uses no extra directories.
 
-**Reload and caching**
+**Reload and local database**
 
-Reload runs the same scan as on load. The parse result of each `.jsonl` file is kept in memory, keyed by path, modification time and size. A file whose key has not changed is not parsed again. Entries for files that no longer exist are dropped. Deduplication and totals are recomputed on every scan. The cache is not saved to disk, so it is empty after restart.
+Reload runs the same scan as on load. It finds the log files, syncs them into the database, then builds the session list from the database.
 
-Session detail uses the result from the last scan. If the file was not in that scan, the app parses that file alone, without cross-session deduplication.
+The database is the file `token-tracker.sqlite` in the app data directory. It stores:
+
+- per transcript file: path, source, session ID, project, worker label and agent type, file size, modification time, parser version, and whether the file was on disk at the last scan;
+- per turn: timestamp, model, token counts and deduplication key.
+
+It does not store costs. Costs are computed at read time from the price timeline (see [Pricing](#pricing)), so a price refresh also applies to sessions parsed earlier.
+
+A file is parsed again only when its size or modification time differs from the stored values, or when the stored parser version differs from `PARSER_VERSION` in `src-tauri/src/db.rs`. Otherwise its stored turns are used. If parsing fails, the stored data for that file is kept and the file is retried on the next scan.
+
+When a stored file is no longer on disk, for example because Claude Code deleted an old transcript, its data is kept and marked deleted. Its session shows a `log deleted` badge. If the file comes back, it is marked present again. A file that is still on disk but no longer in the scan, for example after its extra directory is removed in Settings, is kept and stays listed.
+
+Session detail uses the groups from the last scan. If the session is not among them, the app runs a scan and looks again.
+
+If the database file cannot be opened, or its schema is newer than this app supports, the app logs an error to stderr and uses an in-memory database. Data in that database is lost on restart.
 
 ## How tokens are counted
 
@@ -86,9 +99,9 @@ Session detail uses the result from the last scan. If the file was not in that s
 - Reads `assistant` entries that have `message.usage` and `message.model`. Entries with the model `<synthetic>` are skipped.
 - Counts `input_tokens`, `output_tokens`, `cache_creation_input_tokens` and `cache_read_input_tokens`.
 - Entries that repeat the same response are merged. The key is `message.id` plus `requestId`. Within one file, the last entry's usage is kept, at the position of the first entry.
-- Across sessions, a turn whose key already appeared in an earlier session is dropped, so the copy in the oldest session is kept. Sessions are ordered by their first turn timestamp, oldest first. Sessions with no timestamp come first, and ties are ordered by file path. Turns without a key are kept. Sessions left with no turns are removed.
+- Across Claude Code transcripts, main and worker, a turn whose key already appeared in an earlier transcript is dropped, so the copy in the oldest transcript is kept. Transcripts are ordered by their first turn timestamp, oldest first. Transcripts with no timestamp come first, and ties are ordered by file path. Turns without a key are kept. Transcripts left with no turns are removed.
 - Cross-session deduplication applies to Claude Code only. Codex CLI sessions are not deduplicated.
-- The session ID is the first `sessionId` in the file, or the file name if there is none. The project is the first `cwd`.
+- The session ID is the first `sessionId` in the file, or the file name if there is none. The project is the first `cwd`. Worker transcripts are grouped with their parent by session ID (see below).
 
 **Codex CLI** (`src-tauri/src/parsers/codex.rs`)
 
@@ -97,6 +110,15 @@ Session detail uses the result from the last scan. If the file was not in that s
 - `output_tokens` already includes reasoning tokens. Reasoning is reported separately and is not added again to output or cost.
 - The model comes from the latest `turn_context`, then from `session_meta`, then is `unknown`.
 - The session ID comes from `session_meta`. If that is missing, it comes from the UUID at the end of the file name, or else the file name.
+
+## Sessions and worker transcripts
+
+Claude Code runs subagents as separate transcripts. They are stored as `agent-<id>.jsonl` in a `subagents` folder under a folder named after the session ID, with a sibling `agent-<id>.meta.json`.
+
+- **Worker detection.** A transcript is a worker when its entries have `isSidechain` set to `true`. The label and agent type come from the sibling `.meta.json` fields `description` and `agentType`. A missing or invalid meta file leaves both empty.
+- **Grouping.** Transcripts with the same source and session ID form one session. Within it, the main transcript comes first, then workers by first turn timestamp (no timestamp last), then by file path. A session can consist of worker transcripts only. Its file path is that of its first transcript.
+- **Session list.** One row per session. Tokens, turns and cost are summed over its transcripts. Models are the union. Start is the earliest turn and end is the latest. A `+N workers` badge shows the worker count. The chevron expands one row per transcript, with its label, agent type, models, time range, tokens and cost. Search matches the worker label, agent ID and agent type. A session shows `log deleted` only when all its transcripts are deleted. Each transcript row shows its own badge.
+- **Session detail.** The Transcripts table lists each transcript with its turns, tokens, cost and share of the session cost. The File card shows the main transcript path and the worker count. The Turns table has a Transcript column. When the session has more than one transcript, a filter shows the turns of one transcript. Turns are sorted by time, with turns that have no timestamp last.
 
 ## Pricing
 
@@ -171,7 +193,7 @@ Each turn is priced separately, using the price for its timestamp. Prices are fl
 
 **Session and total costs**
 
-- A session's cost is the sum of its priced turns. If no turn has a price, the cost shows `—` and the session is fully unpriced.
+- A session's cost is the sum of its priced turns across all its transcripts. If no turn has a price, the cost shows `—` and the session is fully unpriced.
 - If some turns have a price, the cost is shown with a `partial` badge. The badge tooltip names the unpriced models.
 - The footer total sums the sessions that match the current source filter and search. Fully unpriced sessions are excluded. Partially priced sessions add only their priced turns.
 - The footer shows a badge such as `+2 unpriced, 1 partial` when any session is unpriced or partial. Its tooltip explains both counts.
@@ -193,9 +215,10 @@ Each turn is priced separately, using the price for its timestamp. Prices are fl
     ├── resources/
     │   └── price_history.json     bundled price timeline
     └── src/
-        ├── lib.rs                app setup and command registration
+        ├── lib.rs                app setup, database open and command registration
         ├── commands.rs           Tauri commands called by the frontend
-        ├── aggregate.rs          cross-session deduplication, summaries and detail
+        ├── aggregate.rs          cross-session deduplication, worker grouping, summaries and detail
+        ├── db.rs                 SQLite store of parsed transcripts (tokens only)
         ├── discovery.rs          log directories, JSONL scan, settings
         ├── model.rs              shared data types
         ├── pricing.rs            price timeline, lookup and cost
