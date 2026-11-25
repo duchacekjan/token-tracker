@@ -30,7 +30,7 @@ pub fn dedup_claude(sessions: &mut [ParsedSession]) {
 }
 
 fn turn_cost(t: &ParsedTurn, prices: &PriceTable) -> Option<f64> {
-    prices.cost(&t.model, &t.usage)
+    prices.cost(&t.model, &t.usage, t.timestamp)
 }
 
 pub fn summarize(s: &ParsedSession, prices: &PriceTable) -> SessionSummary {
@@ -188,8 +188,8 @@ mod tests {
     #[test]
     fn summarize_partial_cost() {
         let p = table();
-        assert!(p.price_for("claude-sonnet-4-5").is_some());
-        assert!(p.price_for("zzz-unknown-model").is_none());
+        assert!(p.price_for("claude-sonnet-4-5", None).is_some());
+        assert!(p.price_for("zzz-unknown-model", None).is_none());
         let s = sess(
             "a",
             vec![
@@ -205,7 +205,9 @@ mod tests {
         assert_eq!(sum.usage.input, 3000);
         assert_eq!(sum.usage.output, 13);
         assert!(sum.started_at < sum.ended_at);
-        let one = p.cost("claude-sonnet-4-5", &s.turns[1].usage).unwrap();
+        let one = p
+            .cost("claude-sonnet-4-5", &s.turns[1].usage, s.turns[1].timestamp)
+            .unwrap();
         assert!((sum.cost_usd.unwrap() - 2.0 * one).abs() < 1e-12);
         let d = detail(&s, &p);
         assert!(d.turns[0].cost_usd.is_none());

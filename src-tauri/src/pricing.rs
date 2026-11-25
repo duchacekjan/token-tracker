@@ -1,11 +1,11 @@
 use crate::model::TokenUsage;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 /// USD per token.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelPrice {
     pub input: f64,
@@ -24,15 +24,83 @@ pub struct PricingStatus {
     pub error: Option<String>,
 }
 
-const BUNDLED: &str = include_str!("../resources/bundled_prices.json");
+const BUNDLED: &str = include_str!("../resources/price_history.json");
 const PRICES_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
-const CACHE_FILE: &str = "litellm_prices.json";
+const LOCAL_FILE: &str = "price_history_local.json";
+const TRACKED_PREFIXES: [&str; 8] = [
+    "claude-", "gpt-5", "gpt-4.1", "gpt-4o", "o1", "o3", "o4-mini", "codex-",
+];
+
+/// One price valid from `from` until the next entry. `None` cache = input price.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct Entry {
+    from: DateTime<Utc>,
+    input: f64,
+    output: f64,
+    cache_creation: Option<f64>,
+    cache_read: Option<f64>,
+}
+
+impl Entry {
+    fn price(&self) -> ModelPrice {
+        ModelPrice {
+            input: self.input,
+            output: self.output,
+            cache_creation: self.cache_creation.unwrap_or(self.input),
+            cache_read: self.cache_read.unwrap_or(self.input),
+        }
+    }
+}
+
+type Models = BTreeMap<String, Vec<Entry>>;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct History {
+    #[serde(default)]
+    source: String,
+    #[serde(default)]
+    generated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    head_commit: String,
+    #[serde(default)]
+    models: Models,
+}
 
 pub struct PriceTable {
-    /// Keys lowercased.
-    prices: HashMap<String, ModelPrice>,
+    /// Keys lowercased; entries sorted by `from`.
+    models: Models,
     status: PricingStatus,
+}
+
+/// Union entries per model, sort by `from`, drop entries whose price equals the previous one.
+fn merge(a: &Models, b: &Models) -> Models {
+    let mut out: Models = BTreeMap::new();
+    for (k, v) in a.iter().chain(b.iter()) {
+        out.entry(k.to_lowercase())
+            .or_default()
+            .extend(v.iter().copied());
+    }
+    for v in out.values_mut() {
+        v.sort_by_key(|e| e.from);
+        let mut kept: Vec<Entry> = Vec::with_capacity(v.len());
+        for e in v.iter() {
+            if kept.last().map(|l| l.price()) != Some(e.price()) {
+                kept.push(*e);
+            }
+        }
+        *v = kept;
+    }
+    out
+}
+
+struct Current {
+    input: f64,
+    output: f64,
+    cache_creation: Option<f64>,
+    cache_read: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -43,11 +111,13 @@ struct RawEntry {
     cache_read_input_token_cost: Option<f64>,
 }
 
-fn parse_litellm(s: &str) -> anyhow::Result<HashMap<String, ModelPrice>> {
+/// Current LiteLLM prices for tracked, un-prefixed keys.
+fn parse_current(s: &str) -> anyhow::Result<BTreeMap<String, Current>> {
     let raw: HashMap<String, serde_json::Value> = serde_json::from_str(s)?;
-    let mut out = HashMap::new();
+    let mut out = BTreeMap::new();
     for (key, val) in raw {
-        if key == "sample_spec" {
+        let key = key.to_lowercase();
+        if key.contains('/') || !TRACKED_PREFIXES.iter().any(|p| key.starts_with(p)) {
             continue;
         }
         let Ok(e) = serde_json::from_value::<RawEntry>(val) else {
@@ -57,16 +127,39 @@ fn parse_litellm(s: &str) -> anyhow::Result<HashMap<String, ModelPrice>> {
             continue;
         };
         out.insert(
-            key.to_lowercase(),
-            ModelPrice {
+            key,
+            Current {
                 input,
                 output,
-                cache_creation: e.cache_creation_input_token_cost.unwrap_or(input),
-                cache_read: e.cache_read_input_token_cost.unwrap_or(input),
+                cache_creation: e.cache_creation_input_token_cost,
+                cache_read: e.cache_read_input_token_cost,
             },
         );
     }
     Ok(out)
+}
+
+/// New entries (at `now`) for models that are new or whose price changed vs. the latest entry.
+fn diff_new_entries(
+    current: &BTreeMap<String, Current>,
+    table: &Models,
+    now: DateTime<Utc>,
+) -> Models {
+    let mut out: Models = BTreeMap::new();
+    for (k, c) in current {
+        let e = Entry {
+            from: now,
+            input: c.input,
+            output: c.output,
+            cache_creation: c.cache_creation,
+            cache_read: c.cache_read,
+        };
+        let latest = table.get(k).and_then(|v| v.last());
+        if latest.map(|l| l.price()) != Some(e.price()) {
+            out.insert(k.clone(), vec![e]);
+        }
+    }
+    out
 }
 
 fn strip_tags(m: &str) -> &str {
@@ -90,21 +183,47 @@ fn strip_date(m: &str) -> &str {
     m
 }
 
-impl PriceTable {
-    #[cfg(test)]
-    pub(crate) fn from_litellm_json(s: &str) -> anyhow::Result<HashMap<String, ModelPrice>> {
-        parse_litellm(s)
-    }
+fn parse_bundled() -> anyhow::Result<History> {
+    Ok(serde_json::from_str(BUNDLED)?)
+}
 
-    fn with_source(
-        prices: HashMap<String, ModelPrice>,
+/// `Ok(None)` when the local file does not exist.
+fn read_local(dir: &Path) -> anyhow::Result<Option<History>> {
+    let path = dir.join(LOCAL_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_str(&std::fs::read_to_string(path)?)?))
+}
+
+/// Write to a temp file in `dir`, then rename over the target.
+async fn persist_local(dir: &Path, h: &History) -> anyhow::Result<()> {
+    let body = serde_json::to_vec(h)?;
+    tokio::fs::create_dir_all(dir).await?;
+    let tmp = dir.join(format!("{LOCAL_FILE}.tmp"));
+    tokio::fs::write(&tmp, body).await?;
+    if let Err(e) = tokio::fs::rename(&tmp, dir.join(LOCAL_FILE)).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e.into());
+    }
+    Ok(())
+}
+
+impl PriceTable {
+    fn build(
+        bundled: &History,
+        local: Option<&History>,
         source: &str,
         updated_at: Option<DateTime<Utc>>,
         error: Option<String>,
     ) -> Self {
-        let model_count = prices.len();
+        let models = match local {
+            Some(l) => merge(&bundled.models, &l.models),
+            None => merge(&bundled.models, &BTreeMap::new()),
+        };
+        let model_count = models.len();
         Self {
-            prices,
+            models,
             status: PricingStatus {
                 source: source.into(),
                 updated_at,
@@ -114,38 +233,37 @@ impl PriceTable {
         }
     }
 
-    fn bundled(error: Option<String>) -> Self {
-        match parse_litellm(BUNDLED) {
-            Ok(p) => Self::with_source(p, "bundled", None, error),
-            Err(e) => Self::with_source(
-                HashMap::new(),
-                "bundled",
-                None,
-                Some(error.unwrap_or_else(|| format!("bundled prices invalid: {e}"))),
-            ),
+    fn bundled_only(error: Option<String>) -> Self {
+        match parse_bundled() {
+            Ok(b) => Self::build(&b, None, "bundled", b.generated_at, error),
+            Err(e) => Self {
+                models: BTreeMap::new(),
+                status: PricingStatus {
+                    source: "bundled".into(),
+                    updated_at: None,
+                    model_count: 0,
+                    error: Some(error.unwrap_or_else(|| format!("bundled prices invalid: {e}"))),
+                },
+            },
         }
     }
 
     pub fn load(cache_dir: &Path) -> Self {
-        let path = cache_dir.join(CACHE_FILE);
-        if !path.exists() {
-            return Self::bundled(None);
-        }
-        let res = (|| -> anyhow::Result<Self> {
-            let body = std::fs::read_to_string(&path)?;
-            let prices = parse_litellm(&body)?;
-            let mtime = std::fs::metadata(&path)
-                .and_then(|m| m.modified())
-                .ok()
-                .map(DateTime::<Utc>::from);
-            Ok(Self::with_source(prices, "cache", mtime, None))
-        })();
-        match res {
-            Ok(t) => t,
-            Err(e) => Self::bundled(Some(format!("cache unreadable: {e}"))),
+        let Ok(bundled) = parse_bundled() else {
+            return Self::bundled_only(None);
+        };
+        match read_local(cache_dir) {
+            Ok(None) => Self::bundled_only(None),
+            Ok(Some(l)) => {
+                let at = l.generated_at.or(bundled.generated_at);
+                Self::build(&bundled, Some(&l), "cache", at, None)
+            }
+            Err(e) => Self::bundled_only(Some(format!("local price history unreadable: {e}"))),
         }
     }
 
+    /// Download current prices and record changes at `now`. A persist failure
+    /// still returns the new table, with `status.error` set.
     pub async fn refresh(cache_dir: &Path) -> anyhow::Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
@@ -157,37 +275,66 @@ impl PriceTable {
             .error_for_status()?
             .text()
             .await?;
-        let prices = parse_litellm(&body)?;
-        if prices.is_empty() {
+        let current = parse_current(&body)?;
+        if current.is_empty() {
             anyhow::bail!("no prices in response");
         }
-        std::fs::create_dir_all(cache_dir)?;
-        std::fs::write(cache_dir.join(CACHE_FILE), &body)?;
-        Ok(Self::with_source(prices, "online", Some(Utc::now()), None))
+        let bundled = parse_bundled()?;
+        let dir = cache_dir.to_path_buf();
+        // Corrupt local file is replaced by the fresh one.
+        let local = tokio::task::spawn_blocking(move || read_local(&dir))
+            .await?
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let now = Utc::now();
+        let merged = merge(&bundled.models, &local.models);
+        let new = diff_new_entries(&current, &merged, now);
+        let updated = History {
+            source: "token-tracker local refresh".into(),
+            generated_at: Some(now),
+            head_commit: String::new(),
+            models: merge(&local.models, &new),
+        };
+        let error = persist_local(cache_dir, &updated)
+            .await
+            .err()
+            .map(|e| format!("could not save price history: {e}"));
+        Ok(Self::build(
+            &bundled,
+            Some(&updated),
+            "online",
+            Some(now),
+            error,
+        ))
     }
 
-    pub fn price_for(&self, model: &str) -> Option<ModelPrice> {
+    /// Price valid at `at`: latest entry with `from <= at`, first entry if `at`
+    /// precedes all, latest entry if `at` is `None`.
+    pub fn price_for(&self, model: &str, at: Option<DateTime<Utc>>) -> Option<ModelPrice> {
         let m = model.trim().to_lowercase();
         let no_tags = strip_tags(&m);
         let no_date = strip_date(no_tags);
-        let get = |k: &str| self.prices.get(k).copied();
-        for base in [m.as_str(), no_tags, no_date] {
-            if let Some(p) = get(base)
-                .or_else(|| get(&format!("anthropic/{base}")))
-                .or_else(|| get(&format!("openai/{base}")))
-            {
-                return Some(p);
+        let get = |k: &str| self.models.get(k).filter(|v| !v.is_empty());
+        let timeline = [m.as_str(), no_tags, no_date]
+            .into_iter()
+            .find_map(|base| {
+                get(base)
+                    .or_else(|| get(&format!("anthropic/{base}")))
+                    .or_else(|| get(&format!("openai/{base}")))
+            })?;
+        let entry = match at {
+            None => timeline.last()?,
+            Some(t) => {
+                let n = timeline.partition_point(|e| e.from <= t);
+                &timeline[n.saturating_sub(1)]
             }
-        }
-        self.prices
-            .iter()
-            .filter(|(k, _)| k.len() >= 5 && no_date.starts_with(k.as_str()))
-            .max_by_key(|(k, _)| k.len())
-            .map(|(_, p)| *p)
+        };
+        Some(entry.price())
     }
 
-    pub fn cost(&self, model: &str, usage: &TokenUsage) -> Option<f64> {
-        let p = self.price_for(model)?;
+    pub fn cost(&self, model: &str, usage: &TokenUsage, at: Option<DateTime<Utc>>) -> Option<f64> {
+        let p = self.price_for(model, at)?;
         Some(
             usage.input as f64 * p.input
                 + usage.output as f64 * p.output
@@ -205,61 +352,107 @@ impl PriceTable {
 mod tests {
     use super::*;
 
-    const FIX: &str = r#"{
-        "sample_spec": {"input_cost_per_token": 9, "output_cost_per_token": 9},
-        "claude-x-1": {"input_cost_per_token": 0.000003, "output_cost_per_token": 0.000015,
-            "cache_creation_input_token_cost": 0.00000375, "cache_read_input_token_cost": 0.0000003},
-        "gpt-test": {"input_cost_per_token": 0.000001, "output_cost_per_token": 0.000004},
-        "anthropic/claude-viaprefix": {"input_cost_per_token": 2.0, "output_cost_per_token": 3.0},
-        "openai/gpt-viaprefix": {"input_cost_per_token": 4.0, "output_cost_per_token": 5.0},
-        "gpt-short": {"input_cost_per_token": 1.0, "output_cost_per_token": 1.0},
-        "gpt-short-longer": {"input_cost_per_token": 7.0, "output_cost_per_token": 7.0},
-        "no-output": {"input_cost_per_token": 1.0}
-    }"#;
+    fn ts(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
 
-    fn table(json: &str) -> PriceTable {
-        PriceTable::with_source(parse_litellm(json).unwrap(), "bundled", None, None)
+    fn entry(from: &str, input: f64, output: f64) -> Entry {
+        Entry {
+            from: ts(from),
+            input,
+            output,
+            cache_creation: None,
+            cache_read: None,
+        }
+    }
+
+    fn models(list: &[(&str, Vec<Entry>)]) -> Models {
+        list.iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
+    }
+
+    fn table(m: Models) -> PriceTable {
+        let n = m.len();
+        PriceTable {
+            models: m,
+            status: PricingStatus {
+                source: "bundled".into(),
+                updated_at: None,
+                model_count: n,
+                error: None,
+            },
+        }
+    }
+
+    fn timeline() -> PriceTable {
+        table(models(&[(
+            "claude-x-1",
+            vec![
+                entry("2025-01-01T00:00:00Z", 1.0, 2.0),
+                entry("2025-06-01T00:00:00Z", 3.0, 4.0),
+                entry("2025-09-01T00:00:00Z", 5.0, 6.0),
+            ],
+        )]))
     }
 
     #[test]
-    fn parses_and_skips() {
-        let p = PriceTable::from_litellm_json(FIX).unwrap();
-        assert!(!p.contains_key("sample_spec"));
-        assert!(!p.contains_key("no-output"));
-        assert_eq!(p.len(), 6);
-        assert_eq!(p["claude-x-1"].cache_read, 0.0000003);
+    fn timeline_selection() {
+        let t = timeline();
+        let at = |s: &str| t.price_for("claude-x-1", Some(ts(s))).unwrap().input;
+        assert_eq!(at("2024-01-01T00:00:00Z"), 1.0);
+        assert_eq!(at("2025-01-01T00:00:00Z"), 1.0);
+        assert_eq!(at("2025-07-01T00:00:00Z"), 3.0);
+        assert_eq!(at("2025-09-01T00:00:00Z"), 5.0);
+        assert_eq!(at("2030-01-01T00:00:00Z"), 5.0);
+        assert_eq!(t.price_for("claude-x-1", None).unwrap().input, 5.0);
     }
 
     #[test]
     fn missing_cache_defaults_to_input() {
-        let p = table(FIX).price_for("gpt-test").unwrap();
-        assert_eq!(p.cache_creation, 0.000001);
-        assert_eq!(p.cache_read, 0.000001);
+        let p = timeline().price_for("claude-x-1", None).unwrap();
+        assert_eq!(p.cache_creation, 5.0);
+        assert_eq!(p.cache_read, 5.0);
     }
 
     #[test]
-    fn lookup_fallbacks() {
-        let t = table(FIX);
-        assert_eq!(t.price_for("claude-x-1").unwrap().input, 0.000003);
-        assert_eq!(t.price_for("CLAUDE-X-1").unwrap().input, 0.000003);
-        assert_eq!(t.price_for("claude-viaprefix").unwrap().input, 2.0);
-        assert_eq!(t.price_for("gpt-viaprefix").unwrap().input, 4.0);
-        assert_eq!(t.price_for("claude-x-1[1m]").unwrap().input, 0.000003);
-        assert_eq!(t.price_for("claude-x-1-20250101").unwrap().input, 0.000003);
-        assert_eq!(
-            t.price_for("claude-x-1-20250101[1m]").unwrap().input,
-            0.000003
-        );
-        // prefix: longest key wins
-        assert_eq!(t.price_for("gpt-short-foo").unwrap().input, 1.0);
-        assert_eq!(t.price_for("gpt-short-longer-foo").unwrap().input, 7.0);
-        assert!(t.price_for("unknown-model").is_none());
-        assert!(t.price_for("gpt").is_none());
+    fn lookup_chain() {
+        let e = vec![entry("2025-01-01T00:00:00Z", 1.0, 1.0)];
+        let mut e2 = e.clone();
+        e2[0].input = 2.0;
+        let mut e3 = e.clone();
+        e3[0].input = 3.0;
+        let t = table(models(&[
+            ("claude-x-1", e),
+            ("anthropic/claude-viaprefix", e2),
+            ("openai/gpt-viaprefix", e3),
+        ]));
+        let inp = |m: &str| t.price_for(m, None).map(|p| p.input);
+        assert_eq!(inp("claude-x-1"), Some(1.0));
+        assert_eq!(inp("CLAUDE-X-1"), Some(1.0));
+        assert_eq!(inp("claude-viaprefix"), Some(2.0));
+        assert_eq!(inp("gpt-viaprefix"), Some(3.0));
+        assert_eq!(inp("claude-x-1[1m]"), Some(1.0));
+        assert_eq!(inp("claude-x-1-20250101"), Some(1.0));
+        assert_eq!(inp("claude-x-1-20250101[1m]"), Some(1.0));
+        // no prefix fallback
+        assert_eq!(inp("claude-x-1-foo"), None);
+        assert_eq!(inp("claude-opus-4-6-foo"), None);
+        assert_eq!(inp("claude"), None);
     }
 
     #[test]
     fn cost_math() {
-        let t = table(FIX);
+        let t = table(models(&[(
+            "claude-x-1",
+            vec![Entry {
+                from: ts("2025-01-01T00:00:00Z"),
+                input: 0.000003,
+                output: 0.000015,
+                cache_creation: Some(0.00000375),
+                cache_read: Some(0.0000003),
+            }],
+        )]));
         let u = TokenUsage {
             input: 1000,
             output: 100,
@@ -267,37 +460,163 @@ mod tests {
             cache_read: 5000,
             reasoning: 50,
         };
-        let c = t.cost("claude-x-1", &u).unwrap();
+        let c = t.cost("claude-x-1", &u, None).unwrap();
         let exp = 1000.0 * 0.000003 + 100.0 * 0.000015 + 200.0 * 0.00000375 + 5000.0 * 0.0000003;
         assert!((c - exp).abs() < 1e-12);
-        assert!(t.cost("nope-model", &u).is_none());
+        assert!(t.cost("nope-model", &u, None).is_none());
     }
 
     #[test]
-    fn load_cache_vs_bundled() {
+    fn merge_and_collapse() {
+        let a = models(&[(
+            "m",
+            vec![
+                entry("2025-01-01T00:00:00Z", 1.0, 1.0),
+                entry("2025-03-01T00:00:00Z", 1.0, 1.0),
+            ],
+        )]);
+        let b = models(&[
+            (
+                "M",
+                vec![
+                    entry("2025-05-01T00:00:00Z", 2.0, 2.0),
+                    entry("2025-04-01T00:00:00Z", 2.0, 2.0),
+                    entry("2025-06-01T00:00:00Z", 1.0, 1.0),
+                ],
+            ),
+            ("n", vec![entry("2025-01-01T00:00:00Z", 9.0, 9.0)]),
+        ]);
+        let m = merge(&a, &b);
+        let got: Vec<_> = m["m"].iter().map(|e| (e.from, e.input)).collect();
+        assert_eq!(
+            got,
+            vec![
+                (ts("2025-01-01T00:00:00Z"), 1.0),
+                (ts("2025-04-01T00:00:00Z"), 2.0),
+                (ts("2025-06-01T00:00:00Z"), 1.0),
+            ]
+        );
+        assert_eq!(m["n"].len(), 1);
+    }
+
+    #[test]
+    fn diff_logic() {
+        let now = ts("2026-01-01T00:00:00Z");
+        let cur = parse_current(
+            r#"{
+            "sample_spec": {"input_cost_per_token": 9, "output_cost_per_token": 9},
+            "claude-x-1": {"input_cost_per_token": 5.0, "output_cost_per_token": 6.0},
+            "claude-same": {"input_cost_per_token": 1.0, "output_cost_per_token": 1.0,
+                "cache_read_input_token_cost": 1.0},
+            "claude-new": {"input_cost_per_token": 7.0, "output_cost_per_token": 8.0},
+            "claude-nooutput": {"input_cost_per_token": 7.0},
+            "anthropic/claude-prefixed": {"input_cost_per_token": 7.0, "output_cost_per_token": 8.0},
+            "Claude-Upper": {"input_cost_per_token": 2.0, "output_cost_per_token": 3.0},
+            "untracked-model": {"input_cost_per_token": 7.0, "output_cost_per_token": 8.0}
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(cur.len(), 4);
+        let tbl = models(&[
+            (
+                "claude-x-1",
+                vec![
+                    entry("2025-01-01T00:00:00Z", 1.0, 2.0),
+                    entry("2025-09-01T00:00:00Z", 5.0, 6.0),
+                ],
+            ),
+            ("claude-same", vec![entry("2025-01-01T00:00:00Z", 1.0, 1.0)]),
+        ]);
+        let new = diff_new_entries(&cur, &tbl, now);
+        let keys: Vec<_> = new.keys().cloned().collect();
+        assert_eq!(keys, vec!["claude-new", "claude-upper"]);
+        assert_eq!(new["claude-new"][0].from, now);
+        // changed price
+        let tbl2 = models(&[("claude-x-1", vec![entry("2025-01-01T00:00:00Z", 1.0, 2.0)])]);
+        let new2 = diff_new_entries(&cur, &tbl2, now);
+        assert_eq!(new2["claude-x-1"][0].input, 5.0);
+    }
+
+    #[test]
+    fn bundled_history_parses() {
+        let h = parse_bundled().unwrap();
+        assert!(h.generated_at.is_some());
+        assert!(h.models.contains_key("claude-opus-5-5"));
+        assert!(h.models.contains_key("gpt-5"));
+        for v in h.models.values() {
+            assert!(v.windows(2).all(|w| w[0].from <= w[1].from));
+        }
+    }
+
+    #[test]
+    fn bundled_o3_history() {
+        let t = PriceTable::load(Path::new("/nonexistent-cache-dir"));
+        let u = TokenUsage {
+            input: 1_000_000,
+            output: 1_000_000,
+            ..Default::default()
+        };
+        let c1 = t.cost("o3", &u, Some(ts("2025-05-01T00:00:00Z"))).unwrap();
+        let c2 = t.cost("o3", &u, Some(ts("2025-07-01T00:00:00Z"))).unwrap();
+        assert!((c1 - 50.0).abs() < 1e-6, "{c1}");
+        assert!((c2 - 10.0).abs() < 1e-6, "{c2}");
+    }
+
+    #[test]
+    fn load_local_vs_bundled() {
         let dir = tempfile::tempdir().unwrap();
-        let b = PriceTable::load(dir.path());
-        let st = b.status();
+        let st = PriceTable::load(dir.path()).status();
         assert_eq!(st.source, "bundled");
-        assert!(st.updated_at.is_none() && st.error.is_none());
+        assert!(st.updated_at.is_some() && st.error.is_none());
+        let base_count = st.model_count;
 
-        std::fs::write(dir.path().join(CACHE_FILE), FIX).unwrap();
-        let c = PriceTable::load(dir.path());
-        let st = c.status();
+        // legacy cache file is ignored
+        std::fs::write(dir.path().join("litellm_prices.json"), "not json").unwrap();
+        assert_eq!(PriceTable::load(dir.path()).status().source, "bundled");
+
+        let when = ts("2026-02-03T04:05:06Z");
+        let local = History {
+            source: "t".into(),
+            generated_at: Some(when),
+            head_commit: String::new(),
+            models: models(&[(
+                "claude-local-1",
+                vec![entry("2026-02-03T00:00:00Z", 1.0, 2.0)],
+            )]),
+        };
+        std::fs::write(
+            dir.path().join(LOCAL_FILE),
+            serde_json::to_string(&local).unwrap(),
+        )
+        .unwrap();
+        let t = PriceTable::load(dir.path());
+        let st = t.status();
         assert_eq!(st.source, "cache");
-        assert!(st.updated_at.is_some());
-        assert_eq!(st.model_count, 6);
+        assert_eq!(st.updated_at, Some(when));
+        assert_eq!(st.model_count, base_count + 1);
+        assert!(t.price_for("claude-local-1", None).is_some());
+        assert!(t.price_for("claude-opus-5-5", None).is_some());
 
-        std::fs::write(dir.path().join(CACHE_FILE), "not json").unwrap();
+        std::fs::write(dir.path().join(LOCAL_FILE), "not json").unwrap();
         let st = PriceTable::load(dir.path()).status();
         assert_eq!(st.source, "bundled");
         assert!(st.error.is_some());
+        assert_eq!(st.model_count, base_count);
     }
 
-    #[test]
-    fn bundled_parses() {
-        let p = parse_litellm(BUNDLED).unwrap();
-        assert!(p.keys().any(|k| k.starts_with("claude-")));
-        assert!(p.keys().any(|k| k.starts_with("gpt-5")));
+    #[tokio::test]
+    async fn persist_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("nested");
+        let h = History {
+            source: "t".into(),
+            generated_at: Some(ts("2026-01-01T00:00:00Z")),
+            head_commit: String::new(),
+            models: models(&[("m", vec![entry("2026-01-01T00:00:00Z", 1.0, 2.0)])]),
+        };
+        persist_local(&sub, &h).await.unwrap();
+        let back = read_local(&sub).unwrap().unwrap();
+        assert_eq!(back.models["m"], h.models["m"]);
+        assert!(!sub.join(format!("{LOCAL_FILE}.tmp")).exists());
     }
 }
