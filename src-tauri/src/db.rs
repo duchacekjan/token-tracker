@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 /// Bump when parser output semantics change; forces a reparse of every file.
-pub const PARSER_VERSION: i64 = 1;
+pub const PARSER_VERSION: i64 = 2;
 
 const SCHEMA_VERSION: i64 = 2;
 
