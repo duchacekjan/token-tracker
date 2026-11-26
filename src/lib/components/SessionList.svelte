@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { SessionSummary, TranscriptSummary } from "../types";
+  import type { SessionSummary } from "../types";
+  import { keyOf, trLabel } from "../filters";
   import {
     durationMs,
     fmtCompact,
@@ -14,12 +15,12 @@
 
   interface Props {
     sessions: SessionSummary[];
+    totalCount: number;
     loading: boolean;
     error: string | null;
     onopen: (s: SessionSummary) => void;
-    onreload: () => void;
   }
-  let { sessions, loading, error, onopen, onreload }: Props = $props();
+  let { sessions, totalCount, loading, error, onopen }: Props = $props();
 
   type SortKey =
     | "source"
@@ -34,14 +35,10 @@
     | "total"
     | "cost";
 
-  let sourceFilter = $state<"all" | "claude" | "codex">("all");
-  let search = $state("");
   let sortKey = $state<SortKey>("startedAt");
   let sortDir = $state<"asc" | "desc">("desc");
 
   let expanded = $state<Record<string, boolean>>({});
-  const keyOf = (s: SessionSummary) => `${s.source}:${s.id}`;
-  const trLabel = (t: TranscriptSummary) => (t.isSubagent ? (t.agentLabel ?? t.agentId ?? "worker") : "Main");
   const LOG_DELETED_TIP = "Original log file was removed; data kept in local database";
 
   const columns: { key: SortKey; label: string; num?: boolean }[] = [
@@ -94,29 +91,9 @@
     }
   }
 
-  const filtered = $derived.by(() => {
-    const q = search.trim().toLowerCase();
-    return sessions.filter((s) => {
-      if (sourceFilter !== "all" && s.source !== sourceFilter) return false;
-      if (!q) return true;
-      return (
-        (s.project ?? "").toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q) ||
-        s.models.some((m) => m.toLowerCase().includes(q)) ||
-        s.transcripts.some(
-          (t) =>
-            t.isSubagent &&
-            (trLabel(t).toLowerCase().includes(q) ||
-              (t.agentId ?? "").toLowerCase().includes(q) ||
-              (t.agentType ?? "").toLowerCase().includes(q)),
-        )
-      );
-    });
-  });
-
   const sorted = $derived.by(() => {
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...filtered].sort((a, b) => {
+    return [...sessions].sort((a, b) => {
       const va = sortValue(a, sortKey);
       const vb = sortValue(b, sortKey);
       if (va == null && vb == null) return 0;
@@ -130,7 +107,7 @@
 
   const totals = $derived.by(() => {
     const t = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, cost: 0, unpriced: 0, partial: 0 };
-    for (const s of filtered) {
+    for (const s of sessions) {
       t.input += s.usage.input;
       t.output += s.usage.output;
       t.cacheCreation += s.usage.cacheCreation;
@@ -143,27 +120,11 @@
   });
 </script>
 
-<div class="toolbar">
-  <select bind:value={sourceFilter} aria-label="Source filter">
-    <option value="all">All sources</option>
-    <option value="claude">Claude</option>
-    <option value="codex">Codex</option>
-  </select>
-  <input
-    class="grow"
-    type="search"
-    placeholder="Search project, session id, model, worker…"
-    bind:value={search}
-  />
-  <span class="count">{filtered.length} of {sessions.length} sessions</span>
-  <button onclick={onreload} disabled={loading}>{loading ? "Loading…" : "Reload"}</button>
-</div>
-
 {#if error}
   <div class="state error">Failed to load sessions: {error}</div>
-{:else if loading && sessions.length === 0}
+{:else if loading && totalCount === 0}
   <div class="state">Loading sessions…</div>
-{:else if sessions.length === 0}
+{:else if totalCount === 0}
   <div class="state">No sessions found. Add extra directories in Settings if your logs live elsewhere.</div>
 {:else}
   <div class="table-wrap">
@@ -275,7 +236,7 @@
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="5">Total ({filtered.length} sessions)</td>
+          <td colspan="5">Total ({sessions.length} sessions)</td>
           <td class="num" title={fmtInt(totals.input)}>{fmtCompact(totals.input)}</td>
           <td class="num" title={fmtInt(totals.output)}>{fmtCompact(totals.output)}</td>
           <td class="num" title={fmtInt(totals.cacheCreation)}>{fmtCompact(totals.cacheCreation)}</td>

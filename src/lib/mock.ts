@@ -1,5 +1,6 @@
 import type {
   SessionDetail,
+  SessionKey,
   SessionSummary,
   Settings,
   SettingsView,
@@ -176,6 +177,14 @@ export const mockApi = {
   getSession: (source: Source, id: string) => {
     const d = details.find((x) => x.summary.source === source && x.summary.id === id);
     return d ? delay(d) : Promise.reject(new Error(`session not found: ${source}:${id}`));
+  },
+  getSessionsDetail: (keys: SessionKey[]) => {
+    const found: SessionDetail[] = [];
+    for (const k of keys) {
+      const d = details.find((x) => x.summary.source === k.source && x.summary.id === k.id);
+      if (d) found.push(d);
+    }
+    return delay(found);
   },
   getSettings: () => delay(settingsView()),
   saveSettings: (s: Settings) => {
