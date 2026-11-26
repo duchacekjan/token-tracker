@@ -12,6 +12,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir()?;
             let db_path = app.path().app_data_dir()?.join("token-tracker.sqlite");
@@ -26,6 +27,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_sessions,
             commands::get_session,
+            commands::get_sessions_detail,
+            commands::save_csv,
             commands::get_settings,
             commands::save_settings,
             commands::refresh_pricing,
