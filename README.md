@@ -6,7 +6,10 @@ It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app reads
 
 ## What it does
 
-- **Session list.** Shows the sessions found in the log directories, with token totals and estimated cost. Claude Code worker transcripts are grouped under their parent session.
+- **Table.** Lists the sessions found in the log directories, with token totals and estimated cost. Claude Code worker transcripts are grouped under their parent session.
+- **Charts.** Shows token and cost totals over time, and breakdowns by harness, model, project and token type. See [Charts](#charts).
+- **Shared filters.** The filter bar applies to both tabs. See [Filters](#filters).
+- **CSV export.** Writes the filtered sessions, transcripts or turns to a CSV file. See [CSV export](#csv-export).
 - **Session detail.** Shows the token usage of one session, broken down by transcript.
 - **Settings.** Adds extra log directories for Claude Code or Codex CLI.
 - **Pricing refresh.** Downloads current model prices and adds changes to the price history. See [Pricing](#pricing).
@@ -32,6 +35,7 @@ npm install
 npm run tauri dev     # run the desktop app in development mode
 npm run dev           # browser preview with mock data (no Tauri backend)
 npm run check         # svelte-check type checks
+npm test              # vitest unit tests (filters, charts, CSV export)
 cd src-tauri && cargo test
 
 npm run tauri build   # build a release bundle for your platform
@@ -126,6 +130,88 @@ Claude Code runs subagents as separate transcripts. They are stored as `agent-<i
 - **Session list.** One row per session. Tokens, turns and cost are summed over its transcripts. Models are the union. Start is the earliest turn and end is the latest. A `+N workers` badge shows the worker count. The chevron expands one row per transcript, with its label, agent type, models, time range, tokens and cost. Search matches the label, agent ID and agent type of worker transcripts. The `Main` label is not searched. A session shows `log deleted` only when all its transcripts are deleted. Each transcript row shows its own badge.
 - **Session detail.** The Transcripts table lists each transcript with its turns, tokens, cost and share of the session cost. The File card shows the main transcript path and the worker count. The Turns table has a Transcript column. When the session has more than one transcript, a filter shows the turns of one transcript. Turns are sorted by time, with turns that have no timestamp last.
 
+## Filters
+
+The Table and Charts tabs share one filter bar above them. The same filters apply to both tabs.
+
+- **Source.** All sources, Claude Code only, or Codex CLI only.
+- **Search.** Matches the project, session ID, model, and the label, agent ID and agent type of worker transcripts. See [Sessions and worker transcripts](#sessions-and-worker-transcripts).
+- **From and To.** A local-time date range. Both ends are inclusive. A session is kept when its start time falls on a local day within the range. A session with no start time is left out while either date is set. Clear dates removes both dates.
+
+The count next to the buttons shows how many sessions match, out of the total. Reload runs the scan again. Export CSV opens the export dialog. See [CSV export](#csv-export).
+
+## Charts
+
+The Charts tab draws the sessions that pass the shared filters. Sessions with no start time are not drawn, and the controls note how many were skipped.
+
+The controls are:
+
+- **Bucket.** Day, week or month. Buckets use local time, and weeks start on Monday. Buckets with no sessions between the first and last session are shown as zero.
+- **Metric.** Tokens or USD. Tokens is input + output + cache creation + cache read. Reasoning is not added, because Codex reports it inside output tokens. USD is the estimated cost from [Pricing](#pricing). Sessions without a price count as zero.
+- **Pie by.** Harness, model or project.
+- **Stacked by.** Harness or model.
+
+The pie and the stacked chart show the 10 largest values, and group the rest as `Other`.
+
+The cards are:
+
+- **Tokens or cost over time.** Bars show the selected metric per bucket. The line shows the other metric on a second axis.
+- **Breakdown.** A pie of the selected metric, split by the chosen dimension.
+- **Tokens by type.** Input, output, cache creation and cache read per bucket, stacked. Reasoning is not a separate series, because it is already part of output.
+- **Stacked over time.** The selected metric per bucket, stacked by harness or model.
+
+Breakdowns and stacks by model need the turns of each session. When one of these is selected, the app loads the turns of the shown sessions in batches of 100. The card shows `Loading turns…` until this finishes, or the error if it fails.
+
+## CSV export
+
+Export CSV opens a dialog. It starts with the current filter bar values. Changing them in the dialog does not change the main view.
+
+**Sessions**
+
+- **Sources, From, To and Search.** Same meaning as in the filter bar.
+- **Models and Projects.** Keep all (the default) or only the ticked values. A project with no `cwd` is listed as `(unknown)`.
+- **Include workers.** Off keeps only main transcripts. Session totals are then summed from the main transcripts only.
+- **Only priced.** Keeps rows that have a cost.
+- **Min cost USD.** Keeps rows with a cost at or above this value. A comma or a point is accepted as the decimal separator. Rows without a cost are left out. An invalid value disables Export.
+
+**Level**
+
+- **Session.** One row per session.
+- **Transcript.** One row per transcript, main and worker.
+- **Turn.** One row per turn. Before writing, the app loads the turns of the selected sessions. The count shown is an estimate from the session summaries, so it does not apply the model, only-priced or min cost filters.
+
+**Fields**
+
+Each level has its own fields. The Defaults, All and None buttons change the selection. Field names are the CSV column headers.
+
+- **Session.** Default: `source`, `session_id`, `project`, `models`, `started_at`, `ended_at`, `worker_count`, `turn_count`, `input`, `output`, `cache_creation`, `cache_read`, `reasoning`, `total_tokens`, `cost_usd`, `cost_status`. Optional: `project_name`, `duration_sec`, `transcript_count`, `unpriced_models`, `log_deleted`, `file_path`.
+- **Transcript.** Default: `source`, `session_id`, `project`, `role`, `agent_label`, `agent_type`, `models`, `started_at`, `ended_at`, `turn_count`, `input`, `output`, `cache_creation`, `cache_read`, `reasoning`, `total_tokens`, `cost_usd`. Optional: `transcript_index`, `agent_id`, `duration_sec`, `cost_status`, `unpriced_models`, `log_deleted`, `file_path`.
+- **Turn.** Default: `source`, `session_id`, `project`, `role`, `agent_label`, `timestamp`, `model`, `input`, `output`, `cache_creation`, `cache_read`, `reasoning`, `total_tokens`, `cost_usd`. Optional: `transcript_index`, `priced`.
+
+`role` is `main` or `worker`. `cost_status` is `priced`, `partial` or `unpriced`, as in the session list.
+
+**Format**
+
+- **Delimiter.** Comma (default) or semicolon.
+- **Decimal.** `.` or `,`. By default it follows the delimiter: `.` with a comma, `,` with a semicolon. If the decimal separator equals the delimiter, numbers with decimals are quoted, and the dialog shows a warning.
+- **UTF-8 BOM.** Off by default with a comma, on by default with a semicolon. The BOM can be switched either way.
+
+**File contents**
+
+- The first line is the header. Every line, including the last, ends with CRLF.
+- Quoting follows RFC 4180. A cell that contains the delimiter, a double quote, CR or LF is wrapped in double quotes, and each double quote inside it is doubled.
+- Timestamps are ISO 8601 in UTC, for example `2026-11-26T09:30:00.000Z`.
+- A missing value is an empty cell. Whole numbers are written as they are. Other numbers keep up to 10 decimal places, without trailing zeros.
+- Text cells that start with `=`, `+`, `-`, `@`, tab or CR get a leading apostrophe, so a spreadsheet does not run them as formulas. The header and numeric cells are not changed.
+
+**Saving**
+
+- The app opens a native save dialog from Rust. The default name is `token-tracker-<level>-<YYYYMMDD>.csv`, and the dialog offers CSV files.
+- If the chosen name does not end in `.csv`, `.csv` is appended. For example, `report.txt` is saved as `report.txt.csv`.
+- The file is written to a temporary file in the same folder and then renamed over the target.
+- Cancelling the save dialog writes nothing, and the export dialog stays open. The export dialog closes after a successful save.
+- In browser preview (`npm run dev`), there is no native dialog. The browser downloads the file under the default name.
+
 ## Pricing
 
 Each turn is priced at the LiteLLM rate that was valid at the turn's timestamp. Rates come from LiteLLM's [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm).
@@ -201,7 +287,7 @@ Each turn is priced separately, using the price for its timestamp. Prices are fl
 
 - A session's cost is the sum of its priced turns across all its transcripts. If no turn has a price, the cost shows `—` and the session is fully unpriced.
 - If some turns have a price, the cost is shown with a `partial` badge. The badge tooltip names the unpriced models.
-- The footer total sums the sessions that match the current source filter and search. Fully unpriced sessions are excluded. Partially priced sessions add only their priced turns.
+- The footer total sums the sessions that match the current filters (source, search and dates). Fully unpriced sessions are excluded. Partially priced sessions add only their priced turns.
 - The footer shows a badge such as `+2 unpriced, 1 partial` when any session is unpriced or partial. Its tooltip explains both counts.
 
 **Costs are estimates.** They use API list prices. Subscription plans are not billed per token, so the totals will not match a subscription bill. Models without a price show `—`.
@@ -215,6 +301,13 @@ Each turn is priced separately, using the price for its timestamp. Prices are fl
 ├── scripts/
 │   └── build-price-history.mjs   rebuilds the bundled price timeline
 ├── src/                          Svelte 5 frontend
+│   ├── App.svelte                tabs, shared filter state, export dialog
+│   └── lib/
+│       ├── api.ts                Tauri calls, with browser fallbacks
+│       ├── filters.ts            search and local-time date range
+│       ├── charts/               time buckets, breakdowns, ECharts theme
+│       ├── components/           tabs, filter bar, export dialog, session detail
+│       └── export/               CSV fields, row builder, quoting
 └── src-tauri/
     ├── Cargo.toml
     ├── tauri.conf.json
