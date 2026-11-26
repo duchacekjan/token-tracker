@@ -75,3 +75,19 @@ export interface SettingsView {
   codexDirs: string[];
   pricing: PricingStatus;
 }
+
+export interface SessionKey {
+  source: Source;
+  id: string;
+}
+
+export type HarnessFilter = "all" | Source;
+
+export interface SessionFilter {
+  source: HarnessFilter;
+  search: string;
+  /** YYYY-MM-DD, local time, inclusive. */
+  from: string | null;
+  /** YYYY-MM-DD, local time, inclusive. */
+  to: string | null;
+}
