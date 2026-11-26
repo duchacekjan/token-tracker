@@ -32,6 +32,9 @@
 
   // ---- model detail cache ----
   const cache = new Map<string, SessionDetail>();
+  // signature of the summary each cached detail was fetched for; mismatch => refetch
+  const sigs = new Map<string, string>();
+  const sigOf = (s: SessionSummary) => `${s.endedAt}|${s.turnCount}`;
   let cacheVer = $state(0);
   let loading = $state(false);
   let loadError = $state<string | null>(null);
@@ -39,9 +42,15 @@
   const needModels = $derived(pieDim === "model" || stackDim === "model");
 
   $effect(() => {
-    if (!needModels) return;
-    const missing = sessions.filter((s) => !cache.has(keyOf(s)));
-    if (missing.length === 0) return;
+    if (!needModels) {
+      loading = false;
+      return;
+    }
+    const missing = sessions.filter((s) => sigs.get(keyOf(s)) !== sigOf(s));
+    if (missing.length === 0) {
+      loading = false;
+      return;
+    }
     let cancelled = false;
     loading = true;
     loadError = null;
@@ -49,9 +58,15 @@
       try {
         const CHUNK = 100;
         for (let i = 0; i < missing.length; i += CHUNK) {
-          const keys = missing.slice(i, i + CHUNK).map((s) => ({ source: s.source, id: s.id }));
+          const chunk = missing.slice(i, i + CHUNK);
+          const keys = chunk.map((s) => ({ source: s.source, id: s.id }));
           const res = await getSessionsDetail(keys);
-          for (const d of res) cache.set(keyOf(d.summary), d);
+          const want = new Map(chunk.map((s) => [keyOf(s), sigOf(s)]));
+          for (const d of res) {
+            const k = keyOf(d.summary);
+            cache.set(k, d);
+            sigs.set(k, want.get(k) ?? sigOf(d.summary));
+          }
           if (cancelled) return;
           cacheVer++;
         }
