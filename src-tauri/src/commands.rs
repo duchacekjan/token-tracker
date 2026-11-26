@@ -223,6 +223,16 @@ fn write_text_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
         .tempfile_in(dir)?;
     tmp.write_all(contents.as_bytes())?;
     tmp.flush()?;
+    // tempfile creates 0600; keep the existing file's mode, else use a normal 0644.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)
+            .map(|m| m.permissions().mode() & 0o7777)
+            .unwrap_or(0o644);
+        tmp.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(mode))?;
+    }
     tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }
@@ -389,6 +399,21 @@ mod tests {
         write_text_atomic(&p, "new").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"new");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    // Explicit set_permissions makes the result independent of the process umask.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_new_file_mode_0644_and_keeps_existing() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("o.csv");
+        write_text_atomic(&p, "a").unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&p), 0o644);
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_text_atomic(&p, "b").unwrap();
+        assert_eq!(mode(&p), 0o600);
     }
 
     #[test]
