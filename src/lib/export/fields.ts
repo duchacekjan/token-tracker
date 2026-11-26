@@ -32,7 +32,11 @@ export interface FieldDef {
   get: (row: FieldRow) => Cell;
 }
 
-const iso = (x: string | null | undefined): Cell => (x ? new Date(x).toISOString() : null);
+const iso = (x: string | null | undefined): Cell => {
+  if (!x) return null;
+  const d = new Date(x);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
 
 const durationSec = (a: string | null, b: string | null): Cell => {
   if (!a || !b) return null;

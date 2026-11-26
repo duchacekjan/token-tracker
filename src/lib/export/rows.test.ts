@@ -53,8 +53,8 @@ const opts = (p: Partial<ExportOptions> = {}): ExportOptions => ({
   from: null,
   to: null,
   search: "",
-  models: [],
-  projects: [],
+  models: null,
+  projects: null,
   includeWorkers: true,
   onlyPriced: false,
   minCostUsd: null,
@@ -72,6 +72,22 @@ describe("rows", () => {
     expect(selectSessions([S1, S2], opts({ sources: ["codex"] })).map((s) => s.id)).toEqual(["s2"]);
     expect(selectSessions([S1, S2], opts({ projects: [""] })).map((s) => s.id)).toEqual(["s2"]);
     expect(selectSessions([S1, S2], opts({ projects: ["/p/a"] })).map((s) => s.id)).toEqual(["s1"]);
+    expect(selectSessions([S1, S2], opts({ projects: null })).map((s) => s.id)).toEqual(["s1", "s2"]);
+    expect(selectSessions([S1, S2], opts({ projects: [] }))).toEqual([]);
+  });
+
+  it("models: null matches all, [] matches nothing", () => {
+    expect(buildRows([S1], opts({ models: null }))).toHaveLength(1);
+    expect(buildRows([S1], opts({ models: [] }))).toHaveLength(0);
+    const o = { level: "transcript" as const, fields: fieldsFor("transcript").map((f) => f.id) };
+    expect(buildRows([S1], opts({ ...o, models: null }))).toHaveLength(2);
+    expect(buildRows([S1], opts({ ...o, models: [] }))).toHaveLength(0);
+  });
+
+  it("unparsable timestamp yields null, not throw", () => {
+    const bad = sess("sb", [main], { startedAt: "garbage" });
+    const r = buildRows([bad], opts());
+    expect(r[0][col("session", "started_at")]).toBeNull();
   });
 
   it("session level includes workers", () => {

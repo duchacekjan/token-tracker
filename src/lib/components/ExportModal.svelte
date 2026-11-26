@@ -23,8 +23,6 @@
   let { sessions, initial, onclose }: Props = $props();
 
   let dialog: HTMLDialogElement;
-  /** Sentinel selection that matches nothing (empty list means all). */
-  const NONE = "\u0000none";
 
   const init = (() => initial)();
   let claude = $state(init.source === "all" || init.source === "claude");
@@ -35,8 +33,8 @@
 
   const allModels = $derived([...new Set(sessions.flatMap((s) => s.models))].sort());
   const allProjects = $derived([...new Set(sessions.map((s) => s.project ?? ""))].sort());
-  let modelSel = $state<string[]>([]); // empty = all
-  let projectSel = $state<string[]>([]);
+  let modelSel = $state<string[] | null>(null); // null = all, [] = none
+  let projectSel = $state<string[] | null>(null);
 
   let includeWorkers = $state(true);
   let onlyPriced = $state(false);
@@ -100,12 +98,11 @@
   function toggle(list: string[], v: string): string[] {
     return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
   }
-  // Model/project lists: empty selection = all, so checkboxes show all checked when empty.
-  const isOn = (list: string[], v: string) => list.length === 0 || list.includes(v);
-  function toggleFilter(list: string[], all: string[], v: string): string[] {
-    const cur = list.length === 0 ? all : list;
-    const next = toggle(cur, v).filter((x) => all.includes(x) || x === NONE);
-    return next.filter((x) => x !== NONE).length === all.length ? [] : next;
+  // Model/project selection: null = all, [] = none.
+  const isOn = (list: string[] | null, v: string) => list === null || list.includes(v);
+  function toggleFilter(list: string[] | null, all: string[], v: string): string[] | null {
+    const next = toggle(list ?? all, v).filter((x) => all.includes(x));
+    return next.length === all.length ? null : next;
   }
 
   const projectLabel = (p: string) => (p === "" ? "(unknown)" : p);
@@ -118,9 +115,15 @@
     try {
       let details: Map<string, SessionDetail> | undefined;
       if (level === "turn") {
-        progress = `Loading turns for ${fmtInt(selected.length)} sessions…`;
-        const list = await getSessionsDetail(selected.map((s) => ({ source: s.source, id: s.id })));
-        details = new Map(list.map((d) => [keyOf(d.summary), d]));
+        const keys = selected.map((s) => ({ source: s.source, id: s.id }));
+        const CHUNK = 100;
+        const total = keys.length;
+        details = new Map();
+        for (let i = 0; i < total; i += CHUNK) {
+          progress = `Loading turns ${fmtInt(Math.min(i + CHUNK, total))}/${fmtInt(total)}…`;
+          const list = await getSessionsDetail(keys.slice(i, i + CHUNK));
+          for (const d of list) details.set(keyOf(d.summary), d);
+        }
         progress = "Building CSV…";
       }
       const csv = toCsv(buildHeader(opts), buildRows(selected, opts, details), opts);
@@ -167,8 +170,8 @@
         <fieldset>
           <legend>
             Models
-            <button type="button" class="link" onclick={() => (modelSel = [])}>All</button>
-            <button type="button" class="link" onclick={() => (modelSel = [NONE])}>None</button>
+            <button type="button" class="link" onclick={() => (modelSel = null)}>All</button>
+            <button type="button" class="link" onclick={() => (modelSel = [])}>None</button>
           </legend>
           <div class="list">
             {#each allModels as m (m)}
@@ -181,8 +184,8 @@
         <fieldset>
           <legend>
             Projects
-            <button type="button" class="link" onclick={() => (projectSel = [])}>All</button>
-            <button type="button" class="link" onclick={() => (projectSel = [NONE])}>None</button>
+            <button type="button" class="link" onclick={() => (projectSel = null)}>All</button>
+            <button type="button" class="link" onclick={() => (projectSel = [])}>None</button>
           </legend>
           <div class="list">
             {#each allProjects as p (p)}

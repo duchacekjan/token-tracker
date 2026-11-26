@@ -8,10 +8,10 @@ export interface ExportOptions extends CsvOptions {
   from: string | null;
   to: string | null;
   search: string;
-  /** Empty = all. */
-  models: string[];
-  /** Empty = all. "" = unknown project. */
-  projects: string[];
+  /** null = all, [] = none. */
+  models: string[] | null;
+  /** null = all, [] = none. "" = unknown project. */
+  projects: string[] | null;
   includeWorkers: boolean;
   onlyPriced: boolean;
   minCostUsd: number | null;
@@ -20,13 +20,13 @@ export interface ExportOptions extends CsvOptions {
 }
 
 export function selectSessions(all: SessionSummary[], o: ExportOptions): SessionSummary[] {
-  const projects = new Set(o.projects);
+  const projects = o.projects === null ? null : new Set(o.projects);
   return all.filter(
     (s) =>
       o.sources.includes(s.source) &&
       inDateRange(s.startedAt, o.from, o.to) &&
       matchesSearch(s, o.search) &&
-      (projects.size === 0 || projects.has(s.project ?? "")),
+      (projects === null || projects.has(s.project ?? "")),
   );
 }
 
@@ -73,8 +73,8 @@ function mainOverride(s: SessionSummary): FieldRow["override"] | null {
 }
 
 function rowsFor(s: SessionSummary, o: ExportOptions, details?: Map<string, SessionDetail>): { fr: FieldRow; cost: number | null }[] {
-  const models = new Set(o.models);
-  const modelOk = (list: string[]) => models.size === 0 || list.some((m) => models.has(m));
+  const models = o.models === null ? null : new Set(o.models);
+  const modelOk = (list: string[]) => models === null || list.some((m) => models.has(m));
   const out: { fr: FieldRow; cost: number | null }[] = [];
   if (o.level === "session") {
     let override: FieldRow["override"];
