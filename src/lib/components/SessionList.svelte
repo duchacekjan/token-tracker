@@ -42,8 +42,8 @@
     { key: "startedAt", label: "Started" },
     { key: "duration", label: "Duration", num: true },
     { key: "models", label: "Model" },
-    { key: "cost", label: "Cost USD", num: true },
     { key: "total", label: "Total tokens", num: true },
+    { key: "cost", label: "Cost USD", num: true },
   ];
 
   function sortValue(s: SessionSummary, k: SortKey): string | number | null {
@@ -166,6 +166,7 @@
             <td>{fmtTableDateTime(s.startedAt)}</td>
             <td class="num">{fmtDuration(durationMs(s.startedAt, s.endedAt))}</td>
             <td class="ellipsis" title={s.models.join(", ")}>{s.models.join(", ") || "—"}</td>
+            <td class="num" title={fmtInt(sessionTotal(s))}>{fmtCompact(sessionTotal(s))}</td>
             <td class="num">
               {#if s.costUsd == null}
                 <span title="No price for {s.unpricedModels.join(', ') || s.models.join(', ')}">—</span>
@@ -176,7 +177,6 @@
                 {/if}
               {/if}
             </td>
-            <td class="num" title={fmtInt(sessionTotal(s))}>{fmtCompact(sessionTotal(s))}</td>
           </tr>
           {#if open}
             {#each s.transcripts as t, ti (ti)}
@@ -194,6 +194,7 @@
                 <td>{fmtTableDateTime(t.startedAt)}</td>
                 <td class="num">{fmtDuration(durationMs(t.startedAt, t.endedAt))}</td>
                 <td class="ellipsis" title={t.models.join(", ")}>{t.models.join(", ") || "—"}</td>
+                <td class="num" title={fmtInt(totalTokens(t.usage))}>{fmtCompact(totalTokens(t.usage))}</td>
                 <td class="num">
                   {#if t.costUsd == null}
                     <span title="No price for {t.unpricedModels.join(', ') || t.models.join(', ')}">—</span>
@@ -204,7 +205,6 @@
                     {/if}
                   {/if}
                 </td>
-                <td class="num" title={fmtInt(totalTokens(t.usage))}>{fmtCompact(totalTokens(t.usage))}</td>
               </tr>
             {/each}
           {/if}
@@ -216,6 +216,9 @@
       <tfoot>
         <tr>
           <td colspan="4">Total ({sessions.length} sessions)</td>
+          <td class="num" title={fmtInt(totals.input + totals.output + totals.cacheCreation + totals.cacheRead)}>
+            {fmtCompact(totals.input + totals.output + totals.cacheCreation + totals.cacheRead)}
+          </td>
           <td class="num">
             {fmtUsd(totals.cost)}
             {#if totals.unpriced > 0 || totals.partial > 0}
@@ -230,9 +233,6 @@
                   .join(', ')}</span
               >
             {/if}
-          </td>
-          <td class="num" title={fmtInt(totals.input + totals.output + totals.cacheCreation + totals.cacheRead)}>
-            {fmtCompact(totals.input + totals.output + totals.cacheCreation + totals.cacheRead)}
           </td>
         </tr>
       </tfoot>
@@ -251,6 +251,7 @@
 <style>
   .table-wrap { flex: 1; min-height: 0; }
   .table-wrap table { height: 100%; }
+  .table-wrap tfoot td { box-shadow: 0 2px 0 var(--surface-2); }
   .table-spacer { height: 100%; }
   .table-spacer td { border: 0; padding: 0; }
   .pagination {
