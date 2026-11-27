@@ -137,4 +137,8 @@ describe("breakdown", () => {
     const r = breakdown([sess("a", null), sess("b", null, { source: "codex" })], "source", "tokens");
     expect(r.map((x) => x.name).sort()).toEqual(["Claude Code", "Codex"]);
   });
+  it("antigravity label", () => {
+    const r = breakdown([sess("a", null, { source: "antigravity" })], "source", "tokens");
+    expect(r.map((x) => x.name)).toEqual(["Antigravity"]);
+  });
 });

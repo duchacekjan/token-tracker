@@ -13,6 +13,8 @@
   --codex-bg: #d9f4ea;
   --gemini: #2563eb;
   --gemini-bg: #dbeafe;
+  --antigravity: #a21caf;
+  --antigravity-bg: #fae8ff;
   --warn: #b45309;
   --warn-bg: #fef3c7;
   --danger: #b42318;
@@ -37,6 +39,8 @@
     --codex-bg: #12342b;
     --gemini: #93b4ff;
     --gemini-bg: #192a50;
+    --antigravity: #e9a0f5;
+    --antigravity-bg: #3b1747;
     --warn: #fbbf24;
     --warn-bg: #3a2e10;
     --danger: #fda29b;
@@ -224,6 +228,10 @@ td.ellipsis {
 .badge.gemini {
   color: var(--gemini);
   background: var(--gemini-bg);
+}
+.badge.antigravity {
+  color: var(--antigravity);
+  background: var(--antigravity-bg);
 }
 .badge.codex {
   color: var(--codex);

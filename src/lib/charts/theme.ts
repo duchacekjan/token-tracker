@@ -8,6 +8,7 @@ export interface Theme {
   claude: string;
   codex: string;
   gemini: string;
+  antigravity: string;
   dark: boolean;
   palette: string[];
 }
@@ -57,6 +58,7 @@ export function readTheme(): Theme {
     claude: v("--claude", "#c2570c"),
     codex: v("--codex", "#0b7a5b"),
     gemini: v("--gemini", "#2563eb"),
+    antigravity: v("--antigravity", "#c026d3"),
     dark,
     palette: dark ? DARK_PALETTE : LIGHT_PALETTE,
   };
@@ -67,6 +69,7 @@ export function colorFor(theme: Theme, name: string, index: number): string {
   if (name === "Claude Code") return theme.claude;
   if (name === "Codex") return theme.codex;
   if (name === "Gemini") return theme.gemini;
+  if (name === "Antigravity") return theme.antigravity;
   if (name === "Other") return theme.muted;
   return theme.palette[index % theme.palette.length];
 }

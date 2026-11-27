@@ -26,6 +26,7 @@
     <option value="claude">Claude</option>
     <option value="codex">Codex</option>
     <option value="gemini">Gemini</option>
+    <option value="antigravity">Antigravity</option>
   </select>
   <input
     class="grow"

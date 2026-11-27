@@ -28,6 +28,7 @@
   let claude = $state(init.source === "all" || init.source === "claude");
   let codex = $state(init.source === "all" || init.source === "codex");
   let gemini = $state(init.source === "all" || init.source === "gemini");
+  let antigravity = $state(init.source === "all" || init.source === "antigravity");
   let from = $state(init.from ?? "");
   let to = $state(init.to ?? "");
   let search = $state(init.search);
@@ -68,7 +69,7 @@
   const minCostBad = $derived(minCost.trim() !== "" && minCostNum == null);
 
   const opts = $derived<ExportOptions>({
-    sources: [...(claude ? ["claude"] : []), ...(codex ? ["codex"] : []), ...(gemini ? ["gemini"] : [])] as Source[],
+    sources: [...(claude ? ["claude"] : []), ...(codex ? ["codex"] : []), ...(gemini ? ["gemini"] : []), ...(antigravity ? ["antigravity"] : [])] as Source[],
     from: from || null,
     to: to || null,
     search,
@@ -155,6 +156,7 @@
           <label><input type="checkbox" bind:checked={claude} /> Claude</label>
           <label><input type="checkbox" bind:checked={codex} /> Codex</label>
           <label><input type="checkbox" bind:checked={gemini} /> Gemini</label>
+          <label><input type="checkbox" bind:checked={antigravity} /> Antigravity</label>
           <label>From <input type="date" bind:value={from} /></label>
           <label>To <input type="date" bind:value={to} /></label>
         </div>
