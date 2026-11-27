@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 pub struct Settings {
     pub extra_claude_dirs: Vec<String>,
     pub extra_codex_dirs: Vec<String>,
+    #[serde(default)]
+    pub extra_gemini_dirs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +16,7 @@ pub struct SettingsView {
     pub settings: Settings,
     pub claude_dirs: Vec<String>,
     pub codex_dirs: Vec<String>,
+    pub gemini_dirs: Vec<String>,
     pub pricing: crate::pricing::PricingStatus,
 }
 
@@ -66,7 +69,7 @@ pub fn default_codex_dirs() -> Vec<PathBuf> {
 }
 
 /// Defaults plus existing user-configured extras, deduped.
-pub fn effective_dirs(settings: &Settings) -> (Vec<PathBuf>, Vec<PathBuf>) {
+pub fn effective_dirs(settings: &Settings) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     fn merge(mut base: Vec<PathBuf>, extras: &[String]) -> Vec<PathBuf> {
         base.extend(extras.iter().map(PathBuf::from));
         existing_dedup(base)
@@ -74,6 +77,14 @@ pub fn effective_dirs(settings: &Settings) -> (Vec<PathBuf>, Vec<PathBuf>) {
     (
         merge(default_claude_dirs(), &settings.extra_claude_dirs),
         merge(default_codex_dirs(), &settings.extra_codex_dirs),
+        merge(
+            existing_dedup(
+                dirs::home_dir()
+                    .map(|h| vec![h.join(".gemini/tmp")])
+                    .unwrap_or_default(),
+            ),
+            &settings.extra_gemini_dirs,
+        ),
     )
 }
 
@@ -220,6 +231,7 @@ mod tests {
         let dir = t.path().join("cfg/nested");
         let s = Settings {
             extra_claude_dirs: vec!["/a".into()],
+            extra_gemini_dirs: vec![],
             extra_codex_dirs: vec!["/b".into(), "/c".into()],
         };
         save_settings(&dir, &s).unwrap();
@@ -250,9 +262,10 @@ mod tests {
                 x.to_string_lossy().into(),
                 t.path().join("missing").to_string_lossy().into(),
             ],
+            extra_gemini_dirs: vec![],
             extra_codex_dirs: vec![y.to_string_lossy().into()],
         };
-        let (c, d) = effective_dirs(&s);
+        let (c, d, _) = effective_dirs(&s);
         assert_eq!(c.iter().filter(|p| **p == x).count(), 1);
         assert!(!c.iter().any(|p| p.ends_with("missing")));
         assert!(d.contains(&y));
