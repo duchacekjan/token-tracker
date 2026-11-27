@@ -118,7 +118,7 @@
 </div>
 
 <style>
-  .table-view { display: flex; flex-direction: column; overflow: hidden; }
+  .table-view { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 16px; }
   .table-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .tabs {
     display: flex;
