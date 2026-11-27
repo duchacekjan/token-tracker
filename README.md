@@ -1,6 +1,6 @@
 # Token Tracker
 
-Token Tracker is a desktop app that reads session logs from Claude Code and OpenAI Codex CLI and shows token usage and estimated USD cost for each session.
+Token Tracker is a desktop app that reads session logs from Claude Code, OpenAI Codex CLI and Gemini CLI and shows token usage and estimated USD cost for each session.
 
 It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app reads log files. Parsed token data is kept in a local SQLite database.
 
@@ -11,7 +11,7 @@ It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app reads
 - **Shared filters.** The filter bar applies to both tabs. See [Filters](#filters).
 - **CSV export.** Writes the filtered sessions, transcripts or turns to a CSV file. See [CSV export](#csv-export).
 - **Session detail.** Shows the token usage of one session, broken down by transcript.
-- **Settings.** Adds extra log directories for Claude Code or Codex CLI.
+- **Settings.** Adds extra log directories for Claude Code, Codex CLI or Gemini CLI.
 - **Pricing refresh.** Downloads current model prices and adds changes to the price history. See [Pricing](#pricing).
 
 ## Prerequisites
@@ -55,14 +55,20 @@ npm run tauri build   # build a release bundle for your platform
 - If `CODEX_HOME` is set and not empty, the app reads `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions`.
 - Otherwise, the app reads `~/.codex/sessions` and `~/.codex/archived_sessions`.
 
+**Gemini CLI**
+
+- The app reads `~/.gemini/tmp` recursively, including session files under `<project>/chats/session-*.jsonl`.
+- Settings can add custom Gemini log directories. Add the directory that contains Gemini session files, and the app scans it recursively.
+
 Only directories that exist are used. Each one is scanned recursively for files ending in `.jsonl` (case-insensitive). Symbolic links are not followed. Claude Code worker transcripts are found by the same scan. See [Sessions and worker transcripts](#sessions-and-worker-transcripts).
 
 **Extra directories**
 
-Settings lets you add more directories for Claude Code or Codex CLI. Extra directories are added to the default directories above. Each one is scanned as given, recursively. The app does not append `projects` or `sessions`, so add the directory that contains the `.jsonl` files itself, for example:
+Settings lets you add more directories for Claude Code, Codex CLI or Gemini CLI. Extra directories are added to the default directories above. Each one is scanned as given, recursively. The app does not append `projects`, `sessions` or `chats`, so add the directory that contains the `.jsonl` files itself, for example:
 
 - Claude Code: `/path/to/.claude/projects`
 - Codex CLI: `/path/to/.codex/sessions`
+- Gemini CLI: `/path/to/.gemini/tmp`
 
 Duplicate and missing paths are ignored.
 
@@ -71,7 +77,8 @@ Extra directories are stored in `settings.json` in the app config directory:
 ```json
 {
   "extraClaudeDirs": ["/mnt/backup/claude/projects"],
-  "extraCodexDirs": []
+  "extraCodexDirs": [],
+  "extraGeminiDirs": []
 }
 ```
 
@@ -224,7 +231,7 @@ Each level has its own fields. The Defaults, All and None buttons change the sel
 
 ## Pricing
 
-Each turn is priced at the LiteLLM rate that was valid at the turn's timestamp. Rates come from LiteLLM's [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm).
+Each turn, including Gemini CLI turns, is priced at the LiteLLM rate that was valid at the turn's timestamp. Rates come from LiteLLM's [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm), using the same bundled history and Refresh prices flow for every supported harness.
 
 **Price timeline**
 
@@ -233,7 +240,7 @@ Each model has a timeline of price entries. An entry has a `from` date and is va
 - The bundled timeline is `src-tauri/resources/price_history.json`. It is built from the git history of LiteLLM's price file. A `from` date is the date of the LiteLLM commit that first had that price. This can lag the vendor's actual price change or model release.
 - Refresh prices adds entries to a local timeline. At startup, the local timeline is merged with the bundled one.
 - When merging, consecutive entries with the same price are collapsed into one.
-- Only these model families are kept: `claude-`, `gpt-5`, `gpt-4.1`, `gpt-4o`, `o1`, `o3`, `o4-mini`, `codex-`. LiteLLM keys that contain `/` are skipped.
+- Only these model families are kept: `claude-`, `gpt-5`, `gpt-4.1`, `gpt-4o`, `o1`, `o3`, `o4-mini`, `codex-`, `gpt-6`, `gemini-`. LiteLLM keys that contain `/` are skipped.
 - Entries without both an input and an output price are ignored. A missing cache-write or cache-read price uses the input price.
 
 **Which price a turn gets**
@@ -248,7 +255,7 @@ Each model has a timeline of price entries. An entry has a `from` date and is va
 2. The name without trailing tags such as `[1m]`.
 3. The name without a trailing `-YYYYMMDD` date.
 
-There is no other matching. A model that matches none of these is unpriced and shows `—`.
+There is no other matching. A model that matches none of these is unpriced and shows `—`. Gemini models receive prices when their model names match a bundled or refreshed `gemini-` entry. Unknown or unmatched model names remain unpriced.
 
 **Refresh prices**
 
@@ -291,7 +298,7 @@ cost = input × input price
      + cache read × cache-read price
 ```
 
-Each turn is priced separately, using the price for its timestamp. Prices are flat per token. Tiered long-context prices are not applied.
+Each turn is priced separately, using the price for its timestamp. Prices are flat per token. Tiered long-context prices are not applied, including for Gemini models.
 
 **Session and total costs**
 
