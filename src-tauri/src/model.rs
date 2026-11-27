@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum Source {
     Claude,
     Codex,
+    Gemini,
 }
 
 /// `input` = NON-cached input tokens. `reasoning` is informational

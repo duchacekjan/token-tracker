@@ -119,6 +119,7 @@ pub fn group(sessions: Vec<ParsedSession>) -> Vec<SessionGroup> {
         let src = match s.source {
             Source::Claude => "claude",
             Source::Codex => "codex",
+            Source::Gemini => "gemini",
         };
         let mut root = s.id.clone();
         if s.source == Source::Codex {
@@ -427,6 +428,7 @@ mod tests {
             .map(|p| match src {
                 Source::Claude => crate::parsers::claude::parse_file(p).unwrap(),
                 Source::Codex => crate::parsers::codex::parse_file(p).unwrap(),
+                Source::Gemini => crate::parsers::gemini::parse_file(p).unwrap(),
             })
             .collect()
     }

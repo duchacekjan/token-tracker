@@ -1,0 +1,7 @@
+{"sessionId":"sess-gem-1","projectHash":"abc123hash","startTime":"2026-03-25T05:34:00.000Z","kind":"main"}
+{"id":"m1","timestamp":"2026-03-25T05:34:01.000Z","type":"user","content":[{"text":"hi"}]}
+{"id":"m2","timestamp":"2026-03-25T05:34:02.000Z","type":"gemini","content":"hello","model":"gemini-2.5-pro"}
+{"id":"m2","timestamp":"2026-03-25T05:34:02.000Z","type":"gemini","content":"hello","model":"gemini-2.5-pro","tokens":{"input":100,"output":20,"cached":30,"thoughts":5,"tool":0,"total":125}}
+{"id":"m3","timestamp":"2026-03-25T05:34:03.000Z","type":"gemini","content":"x","model":"gemini-2.5-flash","tokens":{"input":999,"output":999,"cached":0,"thoughts":0,"tool":0,"total":1998}}
+{"$set":{"lastUpdated":"2026-03-25T05:34:04.000Z"}}
+{"$patch":{"removeIds":["m3"]}}

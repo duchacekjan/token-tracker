@@ -182,7 +182,7 @@
             {#each s.transcripts as t, ti (ti)}
               <tr class="sub">
                 <td class="sub-label">
-                  <span class="badge {t.source}">{t.source}</span>
+                  <span class="badge {s.source}">{s.source}</span>
                   <span class="indent" title={t.filePath}>{trLabel(t)}</span>
                   {#if t.isSubagent && t.agentType}
                     <span class="tag">{t.agentType}</span>

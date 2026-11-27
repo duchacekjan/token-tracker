@@ -155,7 +155,7 @@ const details: SessionDetail[] = [
   build("019a-ffff-0003", "codex", "/home/dev/side/preview-test", { models: ["codex-next-preview"], n: 5, scale: 0.5, start: 3600 }),
 ];
 
-let mockSettings: Settings = { extraClaudeDirs: ["/mnt/backup/.claude/projects"], extraCodexDirs: [] };
+let mockSettings: Settings = { extraClaudeDirs: ["/mnt/backup/.claude/projects"], extraCodexDirs: [], extraGeminiDirs: [], extraAntigravityDirs: [] };
 let pricingUpdated: string | null = new Date().toISOString();
 
 const delay = <T>(v: T, ms = 150) => new Promise<T>((r) => setTimeout(() => r(v), ms));
@@ -164,6 +164,8 @@ const settingsView = (): SettingsView => ({
   settings: structuredClone(mockSettings),
   claudeDirs: ["/home/dev/.claude/projects", ...mockSettings.extraClaudeDirs],
   codexDirs: ["/home/dev/.codex/sessions", ...mockSettings.extraCodexDirs],
+  geminiDirs: ["/home/dev/.gemini/tmp", ...mockSettings.extraGeminiDirs],
+  antigravityDirs: ["/home/dev/.gemini/antigravity", ...mockSettings.extraAntigravityDirs],
   pricing: {
     source: "bundled",
     updatedAt: pricingUpdated,

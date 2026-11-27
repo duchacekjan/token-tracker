@@ -1,0 +1,5 @@
+{"sessionId":"sess-bad","projectHash":"h"}
+{"id":"m1","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":10,"output":2,"cached":0,"thoughts":0,"tool":0,"total":0}}
+{"id":"m2","type":"gemini","model":"gemini-2.5-pro","tok
+
+{"id":"m3","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":7,"output":1,"cached":0,"thoughts":0,"tool":0,"total":0}}

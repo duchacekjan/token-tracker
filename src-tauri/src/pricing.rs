@@ -28,8 +28,8 @@ const BUNDLED: &str = include_str!("../resources/price_history.json");
 const PRICES_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const LOCAL_FILE: &str = "price_history_local.json";
-const TRACKED_PREFIXES: [&str; 9] = [
-    "claude-", "gpt-5", "gpt-4.1", "gpt-4o", "o1", "o3", "o4-mini", "codex-", "gpt-6",
+const TRACKED_PREFIXES: [&str; 10] = [
+    "claude-", "gpt-5", "gpt-4.1", "gpt-4o", "o1", "o3", "o4-mini", "codex-", "gpt-6", "gemini-",
 ];
 const PROVIDER_PREFIX: &str = "openai.";
 
@@ -120,6 +120,18 @@ fn parse_current(s: &str) -> anyhow::Result<BTreeMap<String, Current>> {
     for (key, val) in raw {
         let mut key = key.to_lowercase();
         let mut prefixed = false;
+        if let Some(bare) = key.strip_prefix("gemini/") {
+            key = bare.to_string();
+            prefixed = true;
+        } else if key.starts_with("gemini-") {
+            // Gemini CLI uses Developer API rates. Bare LiteLLM Gemini keys
+            // can refer to Vertex, so only accept explicitly Gemini entries.
+            if lower.contains(&format!("gemini/{key}"))
+                || val.get("litellm_provider").and_then(|p| p.as_str()) != Some("gemini")
+            {
+                continue;
+            }
+        }
         if let Some(bare) = key.strip_prefix(PROVIDER_PREFIX) {
             if lower.contains(bare) {
                 continue; // bare key wins
@@ -348,10 +360,11 @@ impl PriceTable {
     /// precedes all, latest entry if `at` is `None`.
     pub fn price_for(&self, model: &str, at: Option<DateTime<Utc>>) -> Option<ModelPrice> {
         let m = model.trim().to_lowercase();
-        let no_tags = strip_tags(&m);
+        let m = m.strip_prefix("gemini/").unwrap_or(&m);
+        let no_tags = strip_tags(m);
         let no_date = strip_date(no_tags);
         let get = |k: &str| self.models.get(k).filter(|v| !v.is_empty());
-        let timeline = [m.as_str(), no_tags, no_date].into_iter().find_map(get)?;
+        let timeline = [m, no_tags, no_date].into_iter().find_map(get)?;
         let entry = match at {
             None => timeline.last()?,
             Some(t) => {

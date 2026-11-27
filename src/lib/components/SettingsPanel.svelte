@@ -16,6 +16,8 @@
   let refreshing = $state(false);
   let newClaude = $state("");
   let newCodex = $state("");
+  let newGemini = $state("");
+  let newAntigravity = $state("");
 
   async function load() {
     loading = true;
@@ -43,22 +45,24 @@
     }
   }
 
-  function add(kind: "claude" | "codex") {
+  function add(kind: "claude" | "codex" | "gemini" | "antigravity") {
     if (!view) return;
     const s = structuredClone($state.snapshot(view.settings));
-    const list = kind === "claude" ? s.extraClaudeDirs : s.extraCodexDirs;
-    const v = (kind === "claude" ? newClaude : newCodex).trim();
+    const list = kind === "claude" ? s.extraClaudeDirs : kind === "codex" ? s.extraCodexDirs : kind === "gemini" ? s.extraGeminiDirs : s.extraAntigravityDirs;
+    const v = (kind === "claude" ? newClaude : kind === "codex" ? newCodex : kind === "gemini" ? newGemini : newAntigravity).trim();
     if (!v || list.includes(v)) return;
     list.push(v);
     if (kind === "claude") newClaude = "";
-    else newCodex = "";
+    else if (kind === "codex") newCodex = "";
+    else if (kind === "gemini") newGemini = "";
+    else newAntigravity = "";
     save(s);
   }
 
-  function remove(kind: "claude" | "codex", i: number) {
+  function remove(kind: "claude" | "codex" | "gemini" | "antigravity", i: number) {
     if (!view) return;
     const s = structuredClone($state.snapshot(view.settings));
-    (kind === "claude" ? s.extraClaudeDirs : s.extraCodexDirs).splice(i, 1);
+    (kind === "claude" ? s.extraClaudeDirs : kind === "codex" ? s.extraCodexDirs : kind === "gemini" ? s.extraGeminiDirs : s.extraAntigravityDirs).splice(i, 1);
     save(s);
   }
 
@@ -89,7 +93,7 @@
 {#if loading}
   <div class="state">Loading settings…</div>
 {:else if view}
-  {#each [{ kind: "claude" as const, title: "Claude Code", dirs: view.claudeDirs, extra: view.settings.extraClaudeDirs }, { kind: "codex" as const, title: "Codex CLI", dirs: view.codexDirs, extra: view.settings.extraCodexDirs }] as g (g.kind)}
+  {#each [{ kind: "claude" as const, title: "Claude Code", dirs: view.claudeDirs, extra: view.settings.extraClaudeDirs }, { kind: "codex" as const, title: "Codex CLI", dirs: view.codexDirs, extra: view.settings.extraCodexDirs }, { kind: "gemini" as const, title: "Gemini CLI", dirs: view.geminiDirs, extra: view.settings.extraGeminiDirs }, { kind: "antigravity" as const, title: "Antigravity", dirs: view.antigravityDirs, extra: view.settings.extraAntigravityDirs }] as g (g.kind)}
     <h2>{g.title} directories</h2>
     <div class="section">
       <p class="muted">Effective directories (read-only)</p>
@@ -122,9 +126,15 @@
         {#if g.kind === "claude"}
           <input type="text" placeholder="/path/to/.claude/projects" bind:value={newClaude} />
           <button class="primary" disabled={saving || !newClaude.trim()}>Add</button>
-        {:else}
+        {:else if g.kind === "codex"}
           <input type="text" placeholder="/path/to/.codex/sessions" bind:value={newCodex} />
           <button class="primary" disabled={saving || !newCodex.trim()}>Add</button>
+        {:else if g.kind === "gemini"}
+          <input type="text" placeholder="/path/to/.gemini/tmp" bind:value={newGemini} />
+          <button class="primary" disabled={saving || !newGemini.trim()}>Add</button>
+        {:else}
+          <input type="text" placeholder="/path/to/.gemini/antigravity" bind:value={newAntigravity} />
+          <button class="primary" disabled={saving || !newAntigravity.trim()}>Add</button>
         {/if}
       </form>
     </div>

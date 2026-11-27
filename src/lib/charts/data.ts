@@ -9,7 +9,7 @@ export type Dim = "source" | "model" | "project";
 export const TOP_N = 10;
 export const OTHER = "Other";
 
-export const SOURCE_LABEL: Record<Source, string> = { claude: "Claude Code", codex: "Codex" };
+export const SOURCE_LABEL: Record<Source, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini", antigravity: "Antigravity" };
 
 const p2 = (n: number) => String(n).padStart(2, "0");
 const ymd = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;

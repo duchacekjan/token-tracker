@@ -1,0 +1,2 @@
+{"sessionId":"sess-tool","projectHash":"h"}
+{"id":"m1","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":100,"output":20,"cached":30,"thoughts":5,"tool":8,"total":0}}
