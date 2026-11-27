@@ -61,7 +61,7 @@
       >
     </div>
   {/if}
-  <main class="content">
+  <main class="content" class:table-view={view === "list" && tab === "table"}>
     {#if view === "settings"}
       <SettingsPanel onback={() => (view = "list")} onpricing={load} />
     {:else if view === "detail" && selected}
@@ -93,7 +93,7 @@
           onclick={() => (tab = "charts")}>Charts</button
         >
       </div>
-      <div role="tabpanel" id="panel-main" aria-labelledby={tab === "table" ? "tab-table" : "tab-charts"}>
+      <div class:table-panel={tab === "table"} role="tabpanel" id="panel-main" aria-labelledby={tab === "table" ? "tab-table" : "tab-charts"}>
         {#if tab === "table"}
           <SessionList
             sessions={filtered}
@@ -118,6 +118,8 @@
 </div>
 
 <style>
+  .table-view { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 16px; }
+  .table-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .tabs {
     display: flex;
     gap: 4px;

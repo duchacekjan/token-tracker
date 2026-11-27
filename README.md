@@ -7,7 +7,7 @@ It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app reads
 ## What it does
 
 - **Table.** Lists the sessions found in the log directories, with token totals and estimated cost. Claude Code worker transcripts are grouped under their parent session.
-- **Charts.** Shows token and cost totals over time, and breakdowns by harness, model, project and token type. See [Charts](#charts).
+- **Charts.** Shows token and cost totals over time, a breakdown by harness, model or project, and a stacked timeline by harness or model. See [Charts](#charts).
 - **Shared filters.** The filter bar applies to both tabs. See [Filters](#filters).
 - **CSV export.** Writes the filtered sessions, transcripts or turns to a CSV file. See [CSV export](#csv-export).
 - **Session detail.** Shows the token usage of one session, broken down by transcript.
@@ -110,7 +110,7 @@ No integrity check runs at startup, so damage deeper in the file surfaces later 
 - Entries that repeat the same response are merged. The key is `message.id` plus `requestId`. Within one file, the last entry's usage is kept, at the position of the first entry.
 - Across Claude Code transcripts, main and worker, a turn whose key already appeared in an earlier transcript is dropped, so the copy in the oldest transcript is kept. Transcripts are ordered by their first turn timestamp, oldest first. Transcripts with no timestamp come first, and ties are ordered by file path. Turns without a key are kept. Transcripts left with no turns are removed.
 - Turn-level deduplication across sessions applies to Claude Code only. Codex CLI keeps one transcript per session ID (see below).
-- The session ID is the first `sessionId` in the file, or the file name if there is none. The project is the first `cwd`. Worker transcripts are grouped with their parent by session ID (see below).
+- The session ID is the first `sessionId` in the file, or the file name if there is none. The project is the first `cwd`. Claude worker transcripts are grouped with their parent by session ID (see below).
 
 **Codex CLI** (`src-tauri/src/parsers/codex.rs`)
 
@@ -120,13 +120,14 @@ No integrity check runs at startup, so damage deeper in the file surfaces later 
 - The model comes from the latest `turn_context`, then from `session_meta`, then is `unknown`.
 - The session ID comes from `session_meta`. If that is missing, it comes from the UUID at the end of the file name, or else the file name.
 - Codex moves rollouts from `sessions/` to `archived_sessions/`, so one session ID can have two copies. One transcript is kept per session ID. The order is: the file still on disk over a log-deleted one, then more turns, then a later last turn, then the smaller file path. The other copy is dropped.
+- Codex subagents are detected from `source.subagent.thread_spawn` or `thread_source: "subagent"`. Their `parent_thread_id` links them to the session that invoked them, and `agent_role` supplies the worker label and type. Nested workers stay under the top-level invoking session, while each worker retains its direct parent link. If a parent log is missing, its workers remain visible in a group keyed by that parent ID.
 
 ## Sessions and worker transcripts
 
 Claude Code runs subagents as separate transcripts. They are stored as `agent-<id>.jsonl` in a `subagents` folder under a folder named after the session ID, with a sibling `agent-<id>.meta.json`.
 
 - **Worker detection.** A transcript is a worker when it lives in a `subagents` directory, or when its entries have `agentId` and the first entry with an `isSidechain` field has `isSidechain` set to `true`. Inline sidechain turns in a main transcript do not make it a worker; they stay in the main transcript. The label and agent type come from the sibling `.meta.json` fields `description` and `agentType`. A missing or invalid meta file leaves both empty.
-- **Grouping.** Transcripts with the same source and session ID form one session. Within it, the main transcript comes first, then workers by first turn timestamp (no timestamp last), then by file path. A session can consist of worker transcripts only. Its file path is that of its first transcript.
+- **Grouping.** Claude transcripts with the same source and session ID form one session. Within it, the main transcript comes first, then workers by first turn timestamp (no timestamp last), then by file path. Codex groups subagent transcripts under their top-level invoking session using parent IDs. A session can consist of worker transcripts only. Its file path is that of its first transcript.
 - **Session list.** One row per session. Tokens, turns and cost are summed over its transcripts. Models are the union. Start is the earliest turn and end is the latest. A `+N workers` badge shows the worker count. The chevron expands one row per transcript, with its label, agent type, models, time range, tokens and cost. Search matches the label, agent ID and agent type of worker transcripts. The `Main` label is not searched. A session shows `log deleted` only when all its transcripts are deleted. Each transcript row shows its own badge.
 - **Session detail.** The Transcripts table lists each transcript with its turns, tokens, cost and share of the session cost. The File card shows the main transcript path and the worker count. The Turns table has a Transcript column. When the session has more than one transcript, a filter shows the turns of one transcript. Turns are sorted by time, with turns that have no timestamp last.
 
@@ -153,14 +154,23 @@ The controls are:
 
 The pie and the stacked chart show the 10 largest values, and group the rest as `Other`.
 
+The chart grid places the first card across both columns. The breakdown pie and stacked timeline appear side by side below it. The grid uses one column on screens narrower than 900px.
+
 The cards are:
 
 - **Tokens or cost over time.** Bars show the selected metric per bucket. The line shows the other metric on a second axis.
 - **Breakdown.** A pie of the selected metric, split by the chosen dimension.
-- **Tokens by type.** Input, output, cache creation and cache read per bucket, stacked. Reasoning is not a separate series, because it is already part of output.
 - **Stacked over time.** The selected metric per bucket, stacked by harness or model.
 
 Breakdowns and stacks by model need the turns of each session. When one of these is selected, the app loads the turns of the shown sessions in batches of 100. The card shows `Loading turns…` until this finishes, or the error if it fails.
+
+## Versioning and releases
+
+The app follows Semantic Versioning. Increment the major version for incompatible changes, the minor version for backward-compatible features, and the patch version for backward-compatible fixes. Keep the app version synchronized in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, along with any applicable lockfile entries.
+
+Before opening a pull request, the contributor should recommend a version bump with its reason and proposed version, then ask the user to choose that bump or skip it. Wait for the choice. If approved, update all app version locations and applicable lockfile entries, then commit the version change before opening the pull request. If the user explicitly skips the bump, continue with the current version.
+
+Releases are started manually from the GitHub Actions Release workflow. The workflow uses the Tauri app version to create a `v<version>` tag.
 
 ## CSV export
 

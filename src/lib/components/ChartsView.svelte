@@ -8,7 +8,6 @@
     breakdown,
     stackedBy,
     timeSeries,
-    tokenTypeSeries,
     type Bucket,
     type Dim,
     type Metric,
@@ -89,7 +88,6 @@
 
   // ---- data ----
   const ts = $derived(timeSeries(sessions, bucket));
-  const tt = $derived(tokenTypeSeries(sessions, bucket));
   const stacked = $derived.by(() => {
     cacheVer;
     return stackedBy(sessions, bucket, stackDim, metric, cache);
@@ -187,18 +185,6 @@
     };
   });
 
-  const optC = $derived.by((): EChartsOption => {
-    themeTick;
-    const th = readTheme();
-    return {
-      ...baseAxes(tt.buckets, th),
-      color: [th.palette[0], th.palette[1], th.palette[2], th.palette[4]],
-      tooltip: { ...tooltipBase(th), trigger: "axis", valueFormatter: (v: any) => fmtInt(Number(v)) },
-      yAxis: yAxis(th, "tokens"),
-      series: tt.series.map((s) => ({ name: s.name, type: "bar", stack: "t", data: s.data })),
-    };
-  });
-
   const optD = $derived.by((): EChartsOption => {
     themeTick;
     const th = readTheme();
@@ -258,7 +244,7 @@
     <div class="state">No sessions match the filters.</div>
   {:else}
     <div class="grid">
-      <section class="card">
+      <section class="card wide">
         <h3>{metric === "tokens" ? "Tokens" : "Cost"} over time</h3>
         <EChart option={optA} />
       </section>
@@ -269,10 +255,6 @@
         {:else}
           <EChart option={optB} />
         {/if}
-      </section>
-      <section class="card">
-        <h3>Tokens by type</h3>
-        <EChart option={optC} />
       </section>
       <section class="card">
         <h3>{metric === "tokens" ? "Tokens" : "Cost"} by {stackDim === "source" ? "harness" : "model"} over time</h3>
@@ -324,6 +306,9 @@
     border-radius: 8px;
     padding: 10px 12px;
     min-width: 0;
+  }
+  .wide {
+    grid-column: 1 / -1;
   }
   .card h3 {
     margin: 0 0 6px;

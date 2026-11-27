@@ -54,6 +54,8 @@ pub struct ParsedSession {
     #[serde(default)]
     pub agent_id: Option<String>,
     #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
     pub is_subagent: bool,
     /// Subagent `meta.json` description.
     #[serde(default)]
@@ -81,6 +83,8 @@ pub struct Turn {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptSummary {
+    pub session_id: String,
+    pub parent_session_id: Option<String>,
     pub file_path: String,
     pub agent_id: Option<String>,
     pub agent_label: Option<String>,

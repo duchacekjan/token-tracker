@@ -44,6 +44,16 @@ export function fmtDateTime(iso: string | null | undefined): string {
   });
 }
 
+export function fmtTableDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const date = [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())].join("-");
+  const time = [d.getHours(), d.getMinutes(), d.getSeconds()].map(pad).join(":");
+  return `${date} ${time}`;
+}
+
 export function durationMs(start: string | null, end: string | null): number | null {
   if (!start || !end) return null;
   const ms = new Date(end).getTime() - new Date(start).getTime();

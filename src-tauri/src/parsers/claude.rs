@@ -121,6 +121,7 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         file_path: path.to_string_lossy().into_owned(),
         turns,
         agent_id,
+        parent_session_id: None,
         is_subagent,
         agent_label: meta_str("description"),
         agent_type: meta_str("agentType"),

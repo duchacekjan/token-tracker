@@ -80,6 +80,9 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
     let mut meta_id: Option<String> = None;
     let mut meta_cwd: Option<String> = None;
     let mut meta_model: Option<String> = None;
+    let mut parent_session_id = None;
+    let mut agent_role = None;
+    let mut is_subagent = false;
     let mut ctx_cwd: Option<String> = None;
     let mut cur_model: Option<String> = None;
     let mut prev_total: Option<Raw> = None;
@@ -99,6 +102,19 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         };
         match v.get("type").and_then(Value::as_str) {
             Some("session_meta") => {
+                let spawn = payload.pointer("/source/subagent/thread_spawn");
+                is_subagent |=
+                    spawn.is_some() || str_at(payload, "thread_source") == Some("subagent");
+                if parent_session_id.is_none() {
+                    parent_session_id = spawn
+                        .and_then(|v| str_at(v, "parent_thread_id"))
+                        .map(str::to_owned);
+                }
+                if agent_role.is_none() {
+                    agent_role = str_at(payload, "agent_role")
+                        .or_else(|| spawn.and_then(|v| str_at(v, "agent_role")))
+                        .map(str::to_owned);
+                }
                 if meta_id.is_none() {
                     meta_id = str_at(payload, "id").map(str::to_owned);
                 }
@@ -166,9 +182,10 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         file_path: path.to_string_lossy().into_owned(),
         turns,
         agent_id: None,
-        is_subagent: false,
-        agent_label: None,
-        agent_type: None,
+        parent_session_id,
+        is_subagent,
+        agent_label: agent_role.clone(),
+        agent_type: agent_role,
         log_deleted: false,
     })
 }
