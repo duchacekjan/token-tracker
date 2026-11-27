@@ -38,7 +38,7 @@
   let sortKey = $state<SortKey>("startedAt");
   let sortDir = $state<"asc" | "desc">("desc");
   let page = $state(1);
-  const pageSize = 25;
+  let pageSize = $state(25);
 
   let expanded = $state<Record<string, boolean>>({});
   const LOG_DELETED_TIP = "Original log file was removed; data kept in local database";
@@ -242,6 +242,7 @@
         {:else}
           <tr><td colspan={columns.length} class="state">No sessions match the filters.</td></tr>
         {/each}
+        <tr class="table-spacer" aria-hidden="true"><td colspan={columns.length}></td></tr>
       </tbody>
       <tfoot>
         <tr>
@@ -275,14 +276,22 @@
     </table>
   </div>
   <nav class="pagination" aria-label="Session pages">
-    <button disabled={currentPage === 1} onclick={() => page--}>Previous</button>
+    <label>Rows per page <select bind:value={pageSize} onchange={() => (page = 1)} aria-label="Rows per page">
+      {#each [10, 25, 50, 100] as size}<option value={size}>{size}</option>{/each}
+    </select></label>
+    <button class="icon" title="Previous page" aria-label="Previous page" disabled={currentPage === 1} onclick={() => page--}>‹</button>
     <span>Page {currentPage} of {pageCount}</span>
-    <button disabled={currentPage === pageCount} onclick={() => page++}>Next</button>
+    <button class="icon" title="Next page" aria-label="Next page" disabled={currentPage === pageCount} onclick={() => page++}>›</button>
   </nav>
 {/if}
 
 <style>
+  .table-wrap { flex: 1; min-height: 0; }
+  .table-wrap table { height: 100%; }
+  .table-spacer { height: 100%; }
+  .table-spacer td { border: 0; padding: 0; }
   .pagination {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: flex-end;
