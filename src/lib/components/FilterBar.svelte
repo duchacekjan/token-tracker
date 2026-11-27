@@ -25,6 +25,7 @@
     <option value="all">All sources</option>
     <option value="claude">Claude</option>
     <option value="codex">Codex</option>
+    <option value="gemini">Gemini</option>
   </select>
   <input
     class="grow"

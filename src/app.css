@@ -11,6 +11,8 @@
   --claude-bg: #fdebd9;
   --codex: #0b7a5b;
   --codex-bg: #d9f4ea;
+  --gemini: #2563eb;
+  --gemini-bg: #dbeafe;
   --warn: #b45309;
   --warn-bg: #fef3c7;
   --danger: #b42318;
@@ -33,6 +35,8 @@
     --claude-bg: #3a2616;
     --codex: #5fd3ad;
     --codex-bg: #12342b;
+    --gemini: #93b4ff;
+    --gemini-bg: #192a50;
     --warn: #fbbf24;
     --warn-bg: #3a2e10;
     --danger: #fda29b;
@@ -216,6 +220,10 @@ td.ellipsis {
 .badge.claude {
   color: var(--claude);
   background: var(--claude-bg);
+}
+.badge.gemini {
+  color: var(--gemini);
+  background: var(--gemini-bg);
 }
 .badge.codex {
   color: var(--codex);

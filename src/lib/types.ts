@@ -1,4 +1,4 @@
-export type Source = "claude" | "codex";
+export type Source = "claude" | "codex" | "gemini";
 
 export interface TokenUsage {
   input: number;
@@ -60,6 +60,7 @@ export interface SessionDetail {
 export interface Settings {
   extraClaudeDirs: string[];
   extraCodexDirs: string[];
+  extraGeminiDirs: string[];
 }
 
 export interface PricingStatus {
@@ -73,6 +74,7 @@ export interface SettingsView {
   settings: Settings;
   claudeDirs: string[];
   codexDirs: string[];
+  geminiDirs: string[];
   pricing: PricingStatus;
 }
 
