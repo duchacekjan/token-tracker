@@ -63,7 +63,7 @@ npm run tauri build   # build a release bundle for your platform
 **Antigravity**
 
 - The app reads `~/.gemini/antigravity` and `~/.gemini/antigravity-acp`.
-- Only `brain/<id>/.system_generated/logs/transcript.jsonl` is read. The model and project come from `conversations/<id>.meta` in the same root.
+- Only `brain/<id>/.system_generated/logs/transcript.jsonl` is read. The model comes from the `steps` table of `conversations/<id>.db` in the same root, opened read-only, so a model switch in the middle of a session is attributed per turn. The project comes from `conversations/<id>.meta`. Google does not document the database, so an Antigravity update may break it. The model then falls back to the `.meta` file.
 
 Only directories that exist are used. Each one is scanned recursively for files ending in `.jsonl` (case-insensitive), and Gemini CLI also takes `.json` files. Symbolic links are not followed. Claude Code worker transcripts are found by the same scan. See [Sessions and worker transcripts](#sessions-and-worker-transcripts).
 
@@ -123,7 +123,7 @@ No integrity check runs at startup, so damage deeper in the file surfaces later 
 - Counts `input_tokens`, `output_tokens`, `cache_creation_input_tokens` and `cache_read_input_tokens`.
 - Entries that repeat the same response are merged. The key is `message.id` plus `requestId`. Within one file, the last entry's usage is kept, at the position of the first entry.
 - Across Claude Code transcripts, main and worker, a turn whose key already appeared in an earlier transcript is dropped, so the copy in the oldest transcript is kept. Transcripts are ordered by their first turn timestamp, oldest first. Transcripts with no timestamp come first, and ties are ordered by file path. Turns without a key are kept. Transcripts left with no turns are removed.
-- Turn-level deduplication across sessions applies to Claude Code only. Codex CLI keeps one transcript per session ID (see below).
+- Turn-level deduplication across sessions applies to Claude Code only. Codex CLI and Gemini CLI keep one transcript per session ID (see below).
 - The session ID is the first `sessionId` in the file, or the file name if there is none. The project is the first `cwd`. Claude worker transcripts are grouped with their parent by session ID (see below).
 
 **Codex CLI** (`src-tauri/src/parsers/codex.rs`)
@@ -147,7 +147,7 @@ No integrity check runs at startup, so damage deeper in the file surfaces later 
 
 - Reads `PLANNER_RESPONSE` lines. Input is `input_tokens`, cache read is `cache_read_tokens`, and output is `output_tokens`. Cache creation and reasoning are zero.
 - Lines with the same `step_index` are merged. The last line's usage is kept, at the position of the first line. A later line with no token fields keeps the earlier usage. Lines without a step index are each kept.
-- The session ID is the `<id>` folder name. The model is `model_id` from the `.meta` file, or `unknown`. The project is `cwd` from the `.meta` file, or else the first tool call's `Cwd` argument. A JSON-quoted `Cwd` is unquoted.
+- The session ID is the `<id>` folder name. The model is read per step from the `steps` table of `conversations/<id>.db` (SQLite, read-only). If that fails, it is `model_id` from the `.meta` file, or `unknown`. Changes to `.meta`, `.db` or `.db-wal` trigger a reparse. The project is `cwd` from the `.meta` file, or else the first tool call's `Cwd` argument. A JSON-quoted `Cwd` is unquoted.
 
 ## Sessions and worker transcripts
 
