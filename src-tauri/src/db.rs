@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 /// Bump when parser output semantics change; forces a reparse of every file.
-pub const PARSER_VERSION: i64 = 2;
+pub const PARSER_VERSION: i64 = 3;
 
-pub(crate) const SCHEMA_VERSION: i64 = 2;
+pub(crate) const SCHEMA_VERSION: i64 = 3;
 
 /// DB was written by a newer app version (`user_version` > supported).
 #[derive(Debug)]
@@ -177,6 +177,11 @@ impl Store {
             )?;
             tx.commit()?;
         }
+        if version < 3 {
+            self.conn.execute_batch(
+                "ALTER TABLE files ADD COLUMN parent_session_id TEXT; PRAGMA user_version = 3;",
+            )?;
+        }
         Ok(())
     }
 
@@ -250,8 +255,8 @@ impl Store {
             tx.execute(
                 "INSERT INTO files (path, source, size, mtime_ns, parser_version, session_id,
                     project, agent_id, is_subagent, agent_label, agent_type, present, parsed_at,
-                    meta_size, meta_mtime_ns)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12, ?13, ?14)",
+                    meta_size, meta_mtime_ns, parent_session_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12, ?13, ?14, ?15)",
                 params![
                     key,
                     source_str(source),
@@ -267,6 +272,7 @@ impl Store {
                     Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
                     meta.map(|m| m.0),
                     meta.map(|m| m.1),
+                    session.parent_session_id,
                 ],
             )?;
             {
@@ -319,7 +325,7 @@ impl Store {
             "SELECT f.path, f.source, f.session_id, f.project, f.agent_id, f.is_subagent,
                     f.agent_label, f.agent_type, f.present,
                     t.timestamp, t.model, t.input, t.output, t.cache_creation,
-                    t.cache_read, t.reasoning, t.dedup_key
+                    t.cache_read, t.reasoning, t.dedup_key, f.parent_session_id
              FROM files f LEFT JOIN turns t ON t.path = f.path
              ORDER BY f.path, t.seq",
         )?;
@@ -336,6 +342,7 @@ impl Store {
                     file_path: path,
                     turns: Vec::new(),
                     agent_id: r.get(4)?,
+                    parent_session_id: r.get(17)?,
                     is_subagent: r.get::<_, i64>(5)? != 0,
                     agent_label: r.get(6)?,
                     agent_type: r.get(7)?,
@@ -674,7 +681,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 2);
+        assert_eq!(v, 3);
         let n: i64 = s
             .conn
             .query_row(

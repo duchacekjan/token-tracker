@@ -317,6 +317,7 @@ mod tests {
             file_path: path.into(),
             turns,
             agent_id: None,
+            parent_session_id: None,
             is_subagent: false,
             agent_label: None,
             agent_type: None,

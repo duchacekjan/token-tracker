@@ -54,6 +54,8 @@ pub struct ParsedSession {
     #[serde(default)]
     pub agent_id: Option<String>,
     #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
     pub is_subagent: bool,
     /// Subagent `meta.json` description.
     #[serde(default)]
