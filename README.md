@@ -110,7 +110,7 @@ No integrity check runs at startup, so damage deeper in the file surfaces later 
 - Entries that repeat the same response are merged. The key is `message.id` plus `requestId`. Within one file, the last entry's usage is kept, at the position of the first entry.
 - Across Claude Code transcripts, main and worker, a turn whose key already appeared in an earlier transcript is dropped, so the copy in the oldest transcript is kept. Transcripts are ordered by their first turn timestamp, oldest first. Transcripts with no timestamp come first, and ties are ordered by file path. Turns without a key are kept. Transcripts left with no turns are removed.
 - Turn-level deduplication across sessions applies to Claude Code only. Codex CLI keeps one transcript per session ID (see below).
-- The session ID is the first `sessionId` in the file, or the file name if there is none. The project is the first `cwd`. Worker transcripts are grouped with their parent by session ID (see below).
+- The session ID is the first `sessionId` in the file, or the file name if there is none. The project is the first `cwd`. Claude worker transcripts are grouped with their parent by session ID (see below).
 
 **Codex CLI** (`src-tauri/src/parsers/codex.rs`)
 
@@ -120,13 +120,14 @@ No integrity check runs at startup, so damage deeper in the file surfaces later 
 - The model comes from the latest `turn_context`, then from `session_meta`, then is `unknown`.
 - The session ID comes from `session_meta`. If that is missing, it comes from the UUID at the end of the file name, or else the file name.
 - Codex moves rollouts from `sessions/` to `archived_sessions/`, so one session ID can have two copies. One transcript is kept per session ID. The order is: the file still on disk over a log-deleted one, then more turns, then a later last turn, then the smaller file path. The other copy is dropped.
+- Codex subagents are detected from `source.subagent.thread_spawn` or `thread_source: "subagent"`. Their `parent_thread_id` links them to the session that invoked them, and `agent_role` supplies the worker label and type. Nested workers stay under the top-level invoking session, while each worker retains its direct parent link. If a parent log is missing, its workers remain visible in a group keyed by that parent ID.
 
 ## Sessions and worker transcripts
 
 Claude Code runs subagents as separate transcripts. They are stored as `agent-<id>.jsonl` in a `subagents` folder under a folder named after the session ID, with a sibling `agent-<id>.meta.json`.
 
 - **Worker detection.** A transcript is a worker when it lives in a `subagents` directory, or when its entries have `agentId` and the first entry with an `isSidechain` field has `isSidechain` set to `true`. Inline sidechain turns in a main transcript do not make it a worker; they stay in the main transcript. The label and agent type come from the sibling `.meta.json` fields `description` and `agentType`. A missing or invalid meta file leaves both empty.
-- **Grouping.** Transcripts with the same source and session ID form one session. Within it, the main transcript comes first, then workers by first turn timestamp (no timestamp last), then by file path. A session can consist of worker transcripts only. Its file path is that of its first transcript.
+- **Grouping.** Claude transcripts with the same source and session ID form one session. Within it, the main transcript comes first, then workers by first turn timestamp (no timestamp last), then by file path. Codex groups subagent transcripts under their top-level invoking session using parent IDs. A session can consist of worker transcripts only. Its file path is that of its first transcript.
 - **Session list.** One row per session. Tokens, turns and cost are summed over its transcripts. Models are the union. Start is the earliest turn and end is the latest. A `+N workers` badge shows the worker count. The chevron expands one row per transcript, with its label, agent type, models, time range, tokens and cost. Search matches the label, agent ID and agent type of worker transcripts. The `Main` label is not searched. A session shows `log deleted` only when all its transcripts are deleted. Each transcript row shows its own badge.
 - **Session detail.** The Transcripts table lists each transcript with its turns, tokens, cost and share of the session cost. The File card shows the main transcript path and the worker count. The Turns table has a Transcript column. When the session has more than one transcript, a filter shows the turns of one transcript. Turns are sorted by time, with turns that have no timestamp last.
 
