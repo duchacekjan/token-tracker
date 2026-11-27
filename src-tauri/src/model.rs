@@ -7,6 +7,7 @@ pub enum Source {
     Claude,
     Codex,
     Gemini,
+    Antigravity,
 }
 
 /// `input` = NON-cached input tokens. `reasoning` is informational

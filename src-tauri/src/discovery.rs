@@ -8,6 +8,8 @@ pub struct Settings {
     pub extra_codex_dirs: Vec<String>,
     #[serde(default)]
     pub extra_gemini_dirs: Vec<String>,
+    #[serde(default)]
+    pub extra_antigravity_dirs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +19,7 @@ pub struct SettingsView {
     pub claude_dirs: Vec<String>,
     pub codex_dirs: Vec<String>,
     pub gemini_dirs: Vec<String>,
+    pub antigravity_dirs: Vec<String>,
     pub pricing: crate::pricing::PricingStatus,
 }
 
@@ -60,6 +63,25 @@ fn codex_dirs_from(home: Option<PathBuf>, env: Option<String>) -> Vec<PathBuf> {
     existing_dedup(vec![base.join("sessions"), base.join("archived_sessions")])
 }
 
+fn gemini_dirs_from(home: Option<PathBuf>, env: Option<String>) -> Vec<PathBuf> {
+    let base = match env.filter(|v| !v.trim().is_empty()) {
+        Some(v) => PathBuf::from(v.trim()),
+        None => match home {
+            Some(h) => h,
+            None => return vec![],
+        },
+    };
+    existing_dedup(vec![base.join(".gemini").join("tmp")])
+}
+
+fn antigravity_dirs_from(home: Option<PathBuf>) -> Vec<PathBuf> {
+    let Some(h) = home else { return vec![] };
+    existing_dedup(vec![
+        h.join(".gemini").join("antigravity"),
+        h.join(".gemini").join("antigravity-acp"),
+    ])
+}
+
 pub fn default_claude_dirs() -> Vec<PathBuf> {
     claude_dirs_from(dirs::home_dir(), std::env::var("CLAUDE_CONFIG_DIR").ok())
 }
@@ -68,27 +90,35 @@ pub fn default_codex_dirs() -> Vec<PathBuf> {
     codex_dirs_from(dirs::home_dir(), std::env::var("CODEX_HOME").ok())
 }
 
-/// Defaults plus existing user-configured extras, deduped.
-pub fn effective_dirs(settings: &Settings) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+/// Defaults plus existing user-configured extras, deduped: (claude, codex, gemini, antigravity).
+pub fn effective_dirs(
+    settings: &Settings,
+) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     fn merge(mut base: Vec<PathBuf>, extras: &[String]) -> Vec<PathBuf> {
         base.extend(extras.iter().map(PathBuf::from));
         existing_dedup(base)
     }
+    let home = dirs::home_dir();
     (
         merge(default_claude_dirs(), &settings.extra_claude_dirs),
         merge(default_codex_dirs(), &settings.extra_codex_dirs),
         merge(
-            existing_dedup(
-                dirs::home_dir()
-                    .map(|h| vec![h.join(".gemini/tmp")])
-                    .unwrap_or_default(),
-            ),
+            gemini_dirs_from(home.clone(), std::env::var("GEMINI_CLI_HOME").ok()),
             &settings.extra_gemini_dirs,
+        ),
+        merge(
+            antigravity_dirs_from(home),
+            &settings.extra_antigravity_dirs,
         ),
     )
 }
 
 pub fn find_jsonl(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    find_files(dirs, &["jsonl"])
+}
+
+/// Recursive file walk keeping files whose extension matches any of `exts` (case-insensitive).
+pub fn find_files(dirs: &[PathBuf], exts: &[&str]) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = Vec::new();
     for dir in dirs {
         for entry in walkdir::WalkDir::new(dir)
@@ -99,12 +129,12 @@ pub fn find_jsonl(dirs: &[PathBuf]) -> Vec<PathBuf> {
             if !entry.file_type().is_file() {
                 continue;
             }
-            let is_jsonl = entry
+            let matches = entry
                 .path()
                 .extension()
                 .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("jsonl"));
-            if is_jsonl {
+                .is_some_and(|e| exts.iter().any(|x| e.eq_ignore_ascii_case(x)));
+            if matches {
                 files.push(entry.into_path());
             }
         }
@@ -212,6 +242,52 @@ mod tests {
     }
 
     #[test]
+    fn gemini_home_default_and_env() {
+        let t = tempdir().unwrap();
+        let a = mk(&t.path().join("h/.gemini/tmp"));
+        let b = mk(&t.path().join("e/.gemini/tmp"));
+        assert_eq!(
+            gemini_dirs_from(Some(t.path().join("h")), None),
+            vec![a.clone()]
+        );
+        assert_eq!(
+            gemini_dirs_from(Some(t.path().join("h")), Some(" ".into())),
+            vec![a]
+        );
+        let env = t.path().join("e").to_string_lossy().into_owned();
+        let r = gemini_dirs_from(Some(t.path().join("h")), Some(env));
+        assert_eq!(r, vec![b]);
+        assert!(gemini_dirs_from(None, None).is_empty());
+    }
+
+    #[test]
+    fn antigravity_defaults_filter_missing() {
+        let t = tempdir().unwrap();
+        assert!(antigravity_dirs_from(Some(t.path().to_path_buf())).is_empty());
+        let a = mk(&t.path().join(".gemini/antigravity"));
+        assert_eq!(
+            antigravity_dirs_from(Some(t.path().to_path_buf())),
+            vec![a.clone()]
+        );
+        let b = mk(&t.path().join(".gemini/antigravity-acp"));
+        assert_eq!(
+            antigravity_dirs_from(Some(t.path().to_path_buf())),
+            vec![a, b]
+        );
+        assert!(antigravity_dirs_from(None).is_empty());
+    }
+
+    #[test]
+    fn find_files_multiple_exts() {
+        let t = tempdir().unwrap();
+        fs::write(t.path().join("a.json"), "").unwrap();
+        fs::write(t.path().join("b.JSONL"), "").unwrap();
+        fs::write(t.path().join("c.txt"), "").unwrap();
+        let r = find_files(&[t.path().to_path_buf()], &["jsonl", "json"]);
+        assert_eq!(r, vec![t.path().join("a.json"), t.path().join("b.JSONL")]);
+    }
+
+    #[test]
     fn find_jsonl_recursive_filtered_sorted() {
         let t = tempdir().unwrap();
         let root = mk(&t.path().join("r"));
@@ -232,6 +308,7 @@ mod tests {
         let s = Settings {
             extra_claude_dirs: vec!["/a".into()],
             extra_gemini_dirs: vec![],
+            extra_antigravity_dirs: vec![],
             extra_codex_dirs: vec!["/b".into(), "/c".into()],
         };
         save_settings(&dir, &s).unwrap();
@@ -263,9 +340,10 @@ mod tests {
                 t.path().join("missing").to_string_lossy().into(),
             ],
             extra_gemini_dirs: vec![],
+            extra_antigravity_dirs: vec![],
             extra_codex_dirs: vec![y.to_string_lossy().into()],
         };
-        let (c, d, _) = effective_dirs(&s);
+        let (c, d, _, _) = effective_dirs(&s);
         assert_eq!(c.iter().filter(|p| **p == x).count(), 1);
         assert!(!c.iter().any(|p| p.ends_with("missing")));
         assert!(d.contains(&y));

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 /// Bump when parser output semantics change; forces a reparse of every file.
-pub const PARSER_VERSION: i64 = 3;
+pub const PARSER_VERSION: i64 = 4;
 
 pub(crate) const SCHEMA_VERSION: i64 = 3;
 
@@ -49,6 +49,7 @@ fn source_str(s: Source) -> &'static str {
         Source::Claude => "claude",
         Source::Codex => "codex",
         Source::Gemini => "gemini",
+        Source::Antigravity => "antigravity",
     }
 }
 
@@ -57,6 +58,7 @@ fn source_from(s: &str) -> anyhow::Result<Source> {
         "claude" => Ok(Source::Claude),
         "codex" => Ok(Source::Codex),
         "gemini" => Ok(Source::Gemini),
+        "antigravity" => Ok(Source::Antigravity),
         other => anyhow::bail!("unknown source in db: {other}"),
     }
 }
@@ -72,8 +74,12 @@ fn to_u64(v: Option<i64>) -> u64 {
 /// (size, mtime_ns, parser_version, meta_size, meta_mtime_ns) of a stored file.
 type Stored = (i64, i64, i64, Option<i64>, Option<i64>);
 
-/// Sibling `<stem>.meta.json` stat, only for Claude subagent transcripts.
+/// Sibling `<stem>.meta.json` stat for Claude subagent transcripts;
+/// `conversations/<id>.meta` stat for Antigravity.
 fn meta_stat(source: Source, path: &Path) -> Option<(i64, i64)> {
+    if source == Source::Antigravity {
+        return stat(&crate::parsers::antigravity::meta_path(path)?).ok();
+    }
     if source != Source::Claude {
         return None;
     }
@@ -192,6 +198,7 @@ impl Store {
         claude_files: &[PathBuf],
         codex_files: &[PathBuf],
         gemini_files: &[PathBuf],
+        antigravity_files: &[PathBuf],
         parse: F,
     ) -> anyhow::Result<SyncStats>
     where
@@ -205,7 +212,8 @@ impl Store {
             .iter()
             .map(|p| (Source::Claude, p))
             .chain(codex_files.iter().map(|p| (Source::Codex, p)))
-            .chain(gemini_files.iter().map(|p| (Source::Gemini, p)));
+            .chain(gemini_files.iter().map(|p| (Source::Gemini, p)))
+            .chain(antigravity_files.iter().map(|p| (Source::Antigravity, p)));
 
         for (source, path) in listed {
             let Some(key) = path.to_str().map(str::to_owned) else {
@@ -395,6 +403,7 @@ mod tests {
             Source::Claude => claude::parse_file(path),
             Source::Codex => codex::parse_file(path),
             Source::Gemini => crate::parsers::gemini::parse_file(path),
+            Source::Antigravity => crate::parsers::antigravity::parse_file(path),
         }
     }
 
@@ -439,7 +448,7 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let (cf, xf) = setup(td.path());
         let mut s = Store::open_in_memory().unwrap();
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(
             st,
             SyncStats {
@@ -452,7 +461,7 @@ mod tests {
 
         let calls = Cell::new(0);
         let st = s
-            .sync(&cf, &xf, &[], |src, p| {
+            .sync(&cf, &xf, &[], &[], |src, p| {
                 calls.set(calls.get() + 1);
                 real_parse(src, p)
             })
@@ -467,7 +476,7 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let (cf, xf) = setup(td.path());
         let mut s = Store::open_in_memory().unwrap();
-        s.sync(&cf, &xf, &[], real_parse).unwrap();
+        s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         let loaded = sorted(s.load_all().unwrap());
         assert_eq!(loaded.len(), 4);
         let mut expected: Vec<ParsedSession> = cf
@@ -492,7 +501,7 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let (cf, xf) = setup(td.path());
         let mut s = Store::open_in_memory().unwrap();
-        s.sync(&cf, &xf, &[], real_parse).unwrap();
+        s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         let target = cf[0].clone();
         let before = s
             .load_all()
@@ -512,7 +521,7 @@ mod tests {
         content.push('\n');
         std::fs::write(&target, content).unwrap();
 
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.parsed, 1);
         assert_eq!(st.unchanged, 3);
         let after = s
@@ -538,12 +547,12 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let (cf, xf) = setup(td.path());
         let mut s = Store::open_in_memory().unwrap();
-        s.sync(&cf, &xf, &[], real_parse).unwrap();
+        s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         let before = sorted(s.load_all().unwrap());
 
         std::fs::remove_file(&cf[0]).unwrap();
         // Dropped from list.
-        let st = s.sync(&cf[1..], &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf[1..], &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.missing, 1);
         assert_eq!(st.unchanged, 3);
         let after = sorted(s.load_all().unwrap());
@@ -561,12 +570,12 @@ mod tests {
         assert_eq!(after.iter().filter(|x| x.log_deleted).count(), 1);
 
         // Still listed but missing: also marked.
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.missing, 1);
 
         // Reappears: present again.
         std::fs::copy(fixtures().join("claude/normal.jsonl"), &cf[0]).unwrap();
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.missing, 0);
         assert!(s.load_all().unwrap().iter().all(|x| !x.log_deleted));
     }
@@ -576,7 +585,7 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let (cf, xf) = setup(td.path());
         let mut s = Store::open_in_memory().unwrap();
-        s.sync(&cf, &xf, &[], real_parse).unwrap();
+        s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         let before = sorted(s.load_all().unwrap());
 
         let mut content = std::fs::read_to_string(&cf[0]).unwrap();
@@ -584,7 +593,7 @@ mod tests {
         std::fs::write(&cf[0], content).unwrap();
 
         let st = s
-            .sync(&cf, &xf, &[], |src, p| {
+            .sync(&cf, &xf, &[], &[], |src, p| {
                 if p == cf[0] {
                     anyhow::bail!("boom")
                 }
@@ -599,7 +608,7 @@ mod tests {
             assert!(same(a, b));
         }
         // Retries next sync.
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.parsed, 1);
         assert_eq!(st.failed, 0);
     }
@@ -609,7 +618,7 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let (cf, xf) = setup(td.path());
         let mut s = Store::open_in_memory().unwrap();
-        s.sync(&cf, &xf, &[], real_parse).unwrap();
+        s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         s.conn
             .execute(
                 "UPDATE files SET present = 0 WHERE path = ?1",
@@ -620,7 +629,7 @@ mod tests {
         content.push_str("\n\n");
         std::fs::write(&cf[0], content).unwrap();
         let st = s
-            .sync(&cf, &xf, &[], |src, p| {
+            .sync(&cf, &xf, &[], &[], |src, p| {
                 if p == cf[0] {
                     anyhow::bail!("boom")
                 }
@@ -630,7 +639,7 @@ mod tests {
         assert_eq!(st.failed, 1);
         assert!(s.load_all().unwrap().iter().all(|x| !x.log_deleted));
         // Old size kept, so it retries.
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.parsed, 1);
     }
 
@@ -642,7 +651,7 @@ mod tests {
         let meta = sub.with_extension("meta.json");
         std::fs::remove_file(&meta).unwrap();
         let mut s = Store::open_in_memory().unwrap();
-        s.sync(&cf, &xf, &[], real_parse).unwrap();
+        s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         let label = |s: &Store| {
             s.load_all()
                 .unwrap()
@@ -658,11 +667,11 @@ mod tests {
             &meta,
         )
         .unwrap();
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.parsed, 1);
         assert_eq!(st.unchanged, 3);
         assert!(label(&s).is_some());
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.parsed, 0);
     }
 
@@ -706,12 +715,43 @@ mod tests {
         let p = td
             .path()
             .join(std::ffi::OsStr::from_bytes(b"bad\xff.jsonl"));
-        std::fs::write(&p, "{}\n").unwrap();
+        // Some filesystems (macOS APFS) reject non-UTF-8 names; nothing to test there.
+        if std::fs::write(&p, "{}\n").is_err() {
+            return;
+        }
         let mut s = Store::open_in_memory().unwrap();
-        let st = s.sync(&[p], &[], &[], real_parse).unwrap();
+        let st = s.sync(&[p], &[], &[], &[], real_parse).unwrap();
         assert_eq!(st.failed, 1);
         assert_eq!(st.parsed, 0);
         assert!(s.load_all().unwrap().is_empty());
+    }
+
+    #[test]
+    fn antigravity_roundtrip_and_meta_change_reparses() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        let id = "00000000-0000-4000-8000-000000000001";
+        let logs = root.join("brain").join(id).join(".system_generated/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::create_dir_all(root.join("conversations")).unwrap();
+        let t = logs.join("transcript.jsonl");
+        std::fs::write(
+            &t,
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","input_tokens":1,"output_tokens":2}"#,
+        )
+        .unwrap();
+        let meta = root.join("conversations").join(format!("{id}.meta"));
+        std::fs::write(&meta, r#"{"model_id":"m-a"}"#).unwrap();
+        let mut s = Store::open_in_memory().unwrap();
+        let f = [t];
+        assert_eq!(s.sync(&[], &[], &[], &f, real_parse).unwrap().parsed, 1);
+        let all = s.load_all().unwrap();
+        assert_eq!(all[0].source, Source::Antigravity);
+        assert_eq!(all[0].turns[0].model, "m-a");
+        assert_eq!(s.sync(&[], &[], &[], &f, real_parse).unwrap().unchanged, 1);
+        std::fs::write(&meta, r#"{"model_id":"m-b-longer"}"#).unwrap();
+        assert_eq!(s.sync(&[], &[], &[], &f, real_parse).unwrap().parsed, 1);
+        assert_eq!(s.load_all().unwrap()[0].turns[0].model, "m-b-longer");
     }
 
     #[test]
@@ -719,11 +759,11 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let (cf, xf) = setup(td.path());
         let mut s = Store::open_in_memory().unwrap();
-        s.sync(&cf, &xf, &[], real_parse).unwrap();
+        s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         s.conn
             .execute("UPDATE files SET parser_version = parser_version - 1", [])
             .unwrap();
-        let st = s.sync(&cf, &xf, &[], real_parse).unwrap();
+        let st = s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         assert_eq!(st.parsed, 4);
         assert_eq!(st.unchanged, 0);
     }
@@ -735,13 +775,13 @@ mod tests {
         let db = td.path().join("nested/dir/tt.db");
         {
             let mut s = Store::open(&db).unwrap();
-            s.sync(&cf, &xf, &[], real_parse).unwrap();
+            s.sync(&cf, &xf, &[], &[], real_parse).unwrap();
         }
         let mut s = Store::open(&db).unwrap();
         assert_eq!(s.load_all().unwrap().len(), 4);
         let calls = Cell::new(0);
         let st = s
-            .sync(&cf, &xf, &[], |src, p| {
+            .sync(&cf, &xf, &[], &[], |src, p| {
                 calls.set(calls.get() + 1);
                 real_parse(src, p)
             })
