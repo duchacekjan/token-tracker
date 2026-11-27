@@ -4,12 +4,10 @@
   import {
     durationMs,
     fmtCompact,
-    fmtDateTime,
     fmtTableDateTime,
     fmtDuration,
     fmtInt,
     fmtUsd,
-    projectName,
     sessionTotal,
     totalTokens,
   } from "../format";
@@ -25,14 +23,9 @@
 
   type SortKey =
     | "source"
-    | "project"
     | "models"
     | "startedAt"
     | "duration"
-    | "input"
-    | "output"
-    | "cacheCreation"
-    | "cacheRead"
     | "total"
     | "cost";
 
@@ -46,38 +39,23 @@
 
   const columns: { key: SortKey; label: string; num?: boolean }[] = [
     { key: "source", label: "Source" },
-    { key: "project", label: "Project" },
-    { key: "models", label: "Models" },
     { key: "startedAt", label: "Started" },
     { key: "duration", label: "Duration", num: true },
-    { key: "input", label: "Input", num: true },
-    { key: "output", label: "Output", num: true },
-    { key: "cacheCreation", label: "Cache write", num: true },
-    { key: "cacheRead", label: "Cache read", num: true },
-    { key: "total", label: "Total tokens", num: true },
+    { key: "models", label: "Model" },
     { key: "cost", label: "Cost USD", num: true },
+    { key: "total", label: "Total tokens", num: true },
   ];
 
   function sortValue(s: SessionSummary, k: SortKey): string | number | null {
     switch (k) {
       case "source":
         return s.source;
-      case "project":
-        return projectName(s.project).toLowerCase();
       case "models":
         return s.models.join(", ").toLowerCase();
       case "startedAt":
         return s.startedAt ? new Date(s.startedAt).getTime() : null;
       case "duration":
         return durationMs(s.startedAt, s.endedAt);
-      case "input":
-        return s.usage.input;
-      case "output":
-        return s.usage.output;
-      case "cacheCreation":
-        return s.usage.cacheCreation;
-      case "cacheRead":
-        return s.usage.cacheRead;
       case "total":
         return sessionTotal(s);
       case "cost":
@@ -90,7 +68,7 @@
       sortDir = sortDir === "asc" ? "desc" : "asc";
     } else {
       sortKey = k;
-      sortDir = k === "source" || k === "project" || k === "models" ? "asc" : "desc";
+      sortDir = k === "source" || k === "models" ? "asc" : "desc";
     }
   }
 
@@ -178,9 +156,6 @@
                 <span class="chevron-gap"></span>
               {/if}
               <span class="badge {s.source}">{s.source}</span>
-            </td>
-            <td title={s.project ?? ""}>
-              {projectName(s.project)}
               {#if s.subagentCount > 0}
                 <span class="badge workers" title="{s.subagentCount} subagent transcripts">+{s.subagentCount} workers</span>
               {/if}
@@ -188,14 +163,9 @@
                 <span class="badge muted-badge" title={LOG_DELETED_TIP}>log deleted</span>
               {/if}
             </td>
-            <td class="ellipsis" title={s.models.join(", ")}>{s.models.join(", ") || "—"}</td>
             <td>{fmtTableDateTime(s.startedAt)}</td>
             <td class="num">{fmtDuration(durationMs(s.startedAt, s.endedAt))}</td>
-            <td class="num" title={fmtInt(s.usage.input)}>{fmtCompact(s.usage.input)}</td>
-            <td class="num" title={fmtInt(s.usage.output)}>{fmtCompact(s.usage.output)}</td>
-            <td class="num" title={fmtInt(s.usage.cacheCreation)}>{fmtCompact(s.usage.cacheCreation)}</td>
-            <td class="num" title={fmtInt(s.usage.cacheRead)}>{fmtCompact(s.usage.cacheRead)}</td>
-            <td class="num" title={fmtInt(sessionTotal(s))}>{fmtCompact(sessionTotal(s))}</td>
+            <td class="ellipsis" title={s.models.join(", ")}>{s.models.join(", ") || "—"}</td>
             <td class="num">
               {#if s.costUsd == null}
                 <span title="No price for {s.unpricedModels.join(', ') || s.models.join(', ')}">—</span>
@@ -206,11 +176,13 @@
                 {/if}
               {/if}
             </td>
+            <td class="num" title={fmtInt(sessionTotal(s))}>{fmtCompact(sessionTotal(s))}</td>
           </tr>
           {#if open}
             {#each s.transcripts as t, ti (ti)}
               <tr class="sub">
-                <td colspan="2" class="sub-label">
+                <td class="sub-label">
+                  <span class="badge {t.source}">{t.source}</span>
                   <span class="indent" title={t.filePath}>{trLabel(t)}</span>
                   {#if t.isSubagent && t.agentType}
                     <span class="tag">{t.agentType}</span>
@@ -219,14 +191,9 @@
                     <span class="badge muted-badge" title={LOG_DELETED_TIP}>log deleted</span>
                   {/if}
                 </td>
-                <td class="ellipsis" title={t.models.join(", ")}>{t.models.join(", ") || "—"}</td>
                 <td>{fmtTableDateTime(t.startedAt)}</td>
                 <td class="num">{fmtDuration(durationMs(t.startedAt, t.endedAt))}</td>
-                <td class="num" title={fmtInt(t.usage.input)}>{fmtCompact(t.usage.input)}</td>
-                <td class="num" title={fmtInt(t.usage.output)}>{fmtCompact(t.usage.output)}</td>
-                <td class="num" title={fmtInt(t.usage.cacheCreation)}>{fmtCompact(t.usage.cacheCreation)}</td>
-                <td class="num" title={fmtInt(t.usage.cacheRead)}>{fmtCompact(t.usage.cacheRead)}</td>
-                <td class="num" title={fmtInt(totalTokens(t.usage))}>{fmtCompact(totalTokens(t.usage))}</td>
+                <td class="ellipsis" title={t.models.join(", ")}>{t.models.join(", ") || "—"}</td>
                 <td class="num">
                   {#if t.costUsd == null}
                     <span title="No price for {t.unpricedModels.join(', ') || t.models.join(', ')}">—</span>
@@ -237,6 +204,7 @@
                     {/if}
                   {/if}
                 </td>
+                <td class="num" title={fmtInt(totalTokens(t.usage))}>{fmtCompact(totalTokens(t.usage))}</td>
               </tr>
             {/each}
           {/if}
@@ -247,16 +215,7 @@
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="5">Total ({sessions.length} sessions)</td>
-          <td class="num" title={fmtInt(totals.input)}>{fmtCompact(totals.input)}</td>
-          <td class="num" title={fmtInt(totals.output)}>{fmtCompact(totals.output)}</td>
-          <td class="num" title={fmtInt(totals.cacheCreation)}>{fmtCompact(totals.cacheCreation)}</td>
-          <td class="num" title={fmtInt(totals.cacheRead)}>{fmtCompact(totals.cacheRead)}</td>
-          <td
-            class="num"
-            title={fmtInt(totals.input + totals.output + totals.cacheCreation + totals.cacheRead)}
-            >{fmtCompact(totals.input + totals.output + totals.cacheCreation + totals.cacheRead)}</td
-          >
+          <td colspan="4">Total ({sessions.length} sessions)</td>
           <td class="num">
             {fmtUsd(totals.cost)}
             {#if totals.unpriced > 0 || totals.partial > 0}
@@ -271,6 +230,9 @@
                   .join(', ')}</span
               >
             {/if}
+          </td>
+          <td class="num" title={fmtInt(totals.input + totals.output + totals.cacheCreation + totals.cacheRead)}>
+            {fmtCompact(totals.input + totals.output + totals.cacheCreation + totals.cacheRead)}
           </td>
         </tr>
       </tfoot>
