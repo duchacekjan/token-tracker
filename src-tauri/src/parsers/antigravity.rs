@@ -11,11 +11,20 @@ fn tok(v: &Value, key: &str) -> u64 {
 }
 
 /// `<root>/brain/<id>/.system_generated/logs/transcript.jsonl` -> `<id>` dir.
-fn session_dir(path: &Path) -> Option<&Path> {
+pub fn session_dir(path: &Path) -> Option<&Path> {
     let logs = path.parent()?;
     let sys = logs.parent()?;
     (logs.file_name()? == "logs" && sys.file_name()? == ".system_generated").then_some(())?;
     sys.parent()
+}
+
+/// Real data JSON-quotes some strings (`"\"/x\""`); strip one quoting layer.
+fn unquote(s: &str) -> String {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        return serde_json::from_str::<String>(s)
+            .unwrap_or_else(|_| s.trim_matches('"').to_owned());
+    }
+    s.to_owned()
 }
 
 /// `<root>/conversations/<id>.meta` for a transcript path (root = parent of `brain`).
@@ -55,8 +64,8 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
                 .into_iter()
                 .flatten()
                 .filter_map(|c| c.get("args")?.get("Cwd")?.as_str())
-                .find(|c| !c.is_empty())
-                .map(String::from);
+                .map(unquote)
+                .find(|c| !c.is_empty());
         }
 
         let step = v.get("step_index").and_then(Value::as_i64);
@@ -80,9 +89,15 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
         match step {
             Some(k) => match by_key.get(&k) {
                 // Last line wins (RUNNING then DONE), first position kept.
+                // Skip lines without token keys so they don't zero earlier usage.
                 Some(&i) => {
-                    turns[i].usage = turn.usage;
-                    turns[i].timestamp = turn.timestamp;
+                    if ["input_tokens", "cache_read_tokens", "output_tokens"]
+                        .iter()
+                        .any(|k| v.get(*k).is_some())
+                    {
+                        turns[i].usage = turn.usage;
+                        turns[i].timestamp = turn.timestamp;
+                    }
                 }
                 None => {
                     by_key.insert(k, turns.len());
@@ -109,7 +124,7 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
     Ok(ParsedSession {
         id,
         source: Source::Antigravity,
-        project: meta_str("cwd").or(cwd),
+        project: meta_str("cwd").map(|c| unquote(&c)).or(cwd),
         file_path: path.to_string_lossy().into_owned(),
         turns,
         agent_id: None,
@@ -175,6 +190,29 @@ mod tests {
         assert_eq!(s.project.as_deref(), Some("/home/dev/plain-proj"));
         assert_eq!(s.turns.len(), 1);
         assert_eq!(s.turns[0].model, "unknown");
+    }
+
+    #[test]
+    fn quoted_cwd_is_unquoted_and_tokenless_repeat_keeps_usage() {
+        let td = tempfile::tempdir().unwrap();
+        let p = td.path().join("x/.system_generated/logs/transcript.jsonl");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(
+            &p,
+            concat!(
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-10-21T06:00:00Z","input_tokens":5,"output_tokens":7,"tool_calls":[{"args":{"Cwd":"\"/Users/x/proj\""}}]}"#,
+                "\n",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE"}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+        let s = parse_file(&p).unwrap();
+        assert_eq!(s.project.as_deref(), Some("/Users/x/proj"));
+        assert_eq!(s.turns.len(), 1);
+        assert_eq!((s.turns[0].usage.input, s.turns[0].usage.output), (5, 7));
+        assert!(s.turns[0].timestamp.is_some());
+        assert_eq!(unquote("\"bad"), "\"bad");
     }
 
     #[test]

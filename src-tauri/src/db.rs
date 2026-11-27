@@ -80,6 +80,9 @@ fn meta_stat(source: Source, path: &Path) -> Option<(i64, i64)> {
     if source == Source::Antigravity {
         return stat(&crate::parsers::antigravity::meta_path(path)?).ok();
     }
+    if source == Source::Gemini {
+        return stat(&crate::parsers::gemini::project_root_path(path)?).ok();
+    }
     if source != Source::Claude {
         return None;
     }
@@ -752,6 +755,30 @@ mod tests {
         std::fs::write(&meta, r#"{"model_id":"m-b-longer"}"#).unwrap();
         assert_eq!(s.sync(&[], &[], &[], &f, real_parse).unwrap().parsed, 1);
         assert_eq!(s.load_all().unwrap()[0].turns[0].model, "m-b-longer");
+    }
+
+    #[test]
+    fn gemini_project_root_change_reparses() {
+        let td = tempfile::tempdir().unwrap();
+        let chats = td.path().join("slug/chats");
+        std::fs::create_dir_all(&chats).unwrap();
+        let f = chats.join("session-1.jsonl");
+        std::fs::write(
+            &f,
+            r#"{"sessionId":"s1","projectHash":"h","kind":"main"}
+"#,
+        )
+        .unwrap();
+        let mut s = Store::open_in_memory().unwrap();
+        let g = [f];
+        assert_eq!(s.sync(&[], &[], &g, &[], real_parse).unwrap().parsed, 1);
+        assert_eq!(s.sync(&[], &[], &g, &[], real_parse).unwrap().unchanged, 1);
+        std::fs::write(td.path().join("slug/.project_root"), "/real/proj").unwrap();
+        assert_eq!(s.sync(&[], &[], &g, &[], real_parse).unwrap().parsed, 1);
+        assert_eq!(
+            s.load_all().unwrap()[0].project.as_deref(),
+            Some("/real/proj")
+        );
     }
 
     #[test]

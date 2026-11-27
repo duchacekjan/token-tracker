@@ -122,10 +122,7 @@ fn is_gemini_session_file(p: &Path) -> bool {
 
 /// Antigravity transcript; `transcript_full.jsonl` and `logs/chunks/**` are copies.
 fn is_antigravity_transcript(p: &Path) -> bool {
-    p.file_name().is_some_and(|n| n == "transcript.jsonl")
-        && p.parent()
-            .and_then(Path::file_name)
-            .is_some_and(|n| n == "logs")
+    p.file_name().is_some_and(|n| n == "transcript.jsonl") && antigravity::session_dir(p).is_some()
 }
 
 /// Sync the DB with disk, rebuild groups in state, return summaries.
@@ -356,6 +353,7 @@ mod tests {
         assert!(!a(
             "/r/brain/i/.system_generated/logs/chunks/transcript.jsonl"
         ));
+        assert!(!a("/r/brain/i/logs/transcript.jsonl"));
     }
 
     #[test]

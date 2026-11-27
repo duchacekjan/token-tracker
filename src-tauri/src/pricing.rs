@@ -366,6 +366,7 @@ impl PriceTable {
         let get = |k: &str| self.models.get(k).filter(|v| !v.is_empty());
         let no_effort = ["-minimal", "-low", "-medium", "-high"]
             .iter()
+            .filter(|_| no_date.starts_with("gemini-"))
             .find_map(|e| no_date.strip_suffix(e))
             .unwrap_or(no_date);
         let timeline = [m, no_tags, no_date, no_effort].into_iter().find_map(get)?;
@@ -499,6 +500,14 @@ mod tests {
         assert_eq!(inp("gemini-3.8-pro-high"), Some(2.0));
         assert_eq!(inp("gemini-3.8-flash-ultra"), None);
         assert_eq!(inp("unknown"), None);
+    }
+
+    #[test]
+    fn effort_suffix_only_for_gemini() {
+        let e = vec![entry("2025-01-01T00:00:00Z", 1.0, 1.0)];
+        let t = table(models(&[("gpt-5", e.clone()), ("gemini-3.8-flash", e)]));
+        assert!(t.price_for("gpt-5-high", None).is_none());
+        assert!(t.price_for("gemini/gemini-3.8-flash-high", None).is_some());
     }
 
     #[test]
