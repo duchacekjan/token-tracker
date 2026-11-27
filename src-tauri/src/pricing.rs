@@ -364,7 +364,8 @@ impl PriceTable {
         let no_tags = strip_tags(m);
         let no_date = strip_date(no_tags);
         let get = |k: &str| self.models.get(k).filter(|v| !v.is_empty());
-        let timeline = [m, no_tags, no_date].into_iter().find_map(get)?;
+        let no_effort = strip_effort(no_date);
+        let timeline = [m, no_tags, no_date, no_effort].into_iter().find_map(get)?;
         let entry = match at {
             None => timeline.last()?,
             Some(t) => {
@@ -388,6 +389,15 @@ impl PriceTable {
     pub fn status(&self) -> PricingStatus {
         self.status.clone()
     }
+}
+
+/// Drop trailing reasoning-effort suffix from `gemini-` model names.
+pub(crate) fn strip_effort(model: &str) -> &str {
+    ["-minimal", "-low", "-medium", "-high"]
+        .iter()
+        .filter(|_| model.starts_with("gemini-"))
+        .find_map(|e| model.strip_suffix(e))
+        .unwrap_or(model)
 }
 
 #[cfg(test)]
@@ -478,6 +488,31 @@ mod tests {
         assert_eq!(inp("claude-x-1-foo"), None);
         assert_eq!(inp("claude-opus-4-6-foo"), None);
         assert_eq!(inp("claude"), None);
+    }
+
+    #[test]
+    fn effort_suffix_is_stripped_last() {
+        let e = vec![entry("2025-01-01T00:00:00Z", 1.0, 1.0)];
+        let e2 = vec![entry("2025-01-01T00:00:00Z", 2.0, 2.0)];
+        let t = table(models(&[
+            ("gemini-3.8-flash", e),
+            ("gemini-3.8-pro-high", e2),
+        ]));
+        let inp = |m: &str| t.price_for(m, None).map(|p| p.input);
+        assert_eq!(inp("gemini-3.8-flash-medium"), Some(1.0));
+        assert_eq!(inp("gemini-3.8-flash-low"), Some(1.0));
+        // exact key wins over stripping
+        assert_eq!(inp("gemini-3.8-pro-high"), Some(2.0));
+        assert_eq!(inp("gemini-3.8-flash-ultra"), None);
+        assert_eq!(inp("unknown"), None);
+    }
+
+    #[test]
+    fn effort_suffix_only_for_gemini() {
+        let e = vec![entry("2025-01-01T00:00:00Z", 1.0, 1.0)];
+        let t = table(models(&[("gpt-5", e.clone()), ("gemini-3.8-flash", e)]));
+        assert!(t.price_for("gpt-5-high", None).is_none());
+        assert!(t.price_for("gemini/gemini-3.8-flash-high", None).is_some());
     }
 
     #[test]

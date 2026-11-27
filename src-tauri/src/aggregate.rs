@@ -120,6 +120,7 @@ pub fn group(sessions: Vec<ParsedSession>) -> Vec<SessionGroup> {
             Source::Claude => "claude",
             Source::Codex => "codex",
             Source::Gemini => "gemini",
+            Source::Antigravity => "antigravity",
         };
         let mut root = s.id.clone();
         if s.source == Source::Codex {
@@ -241,10 +242,11 @@ pub fn detail_group(g: &SessionGroup, prices: &PriceTable) -> SessionDetail {
     }
 }
 
+/// Gemini can have a legacy .json and a .jsonl for one id; same rule.
 /// Codex moves rollouts from `sessions/` to `archived_sessions/`, so one
 /// session id can have several transcripts. Keep exactly one per id:
 /// present over log-deleted, then more turns, later end, then path.
-fn dedup_codex(sessions: Vec<ParsedSession>) -> Vec<ParsedSession> {
+fn dedup_by_id(sessions: Vec<ParsedSession>) -> Vec<ParsedSession> {
     let better = |a: &ParsedSession, b: &ParsedSession| {
         let ka = (
             !a.log_deleted,
@@ -260,14 +262,14 @@ fn dedup_codex(sessions: Vec<ParsedSession>) -> Vec<ParsedSession> {
             .then_with(|| b.file_path.cmp(&a.file_path))
             .is_gt()
     };
-    let mut best: HashMap<String, usize> = HashMap::new();
+    let mut best: HashMap<(bool, String), usize> = HashMap::new();
     let mut keep: Vec<Option<ParsedSession>> = Vec::new();
     for s in sessions {
-        if s.source != Source::Codex {
+        if !matches!(s.source, Source::Codex | Source::Gemini) {
             keep.push(Some(s));
             continue;
         }
-        let key = s.id.clone();
+        let key = (s.source == Source::Gemini, s.id.clone());
         match best.get(&key) {
             Some(&i) => {
                 if keep[i].as_ref().is_some_and(|cur| better(&s, cur)) {
@@ -298,7 +300,7 @@ pub fn build(
             .then_with(|| a.file_path.cmp(&b.file_path))
     });
     dedup_claude(&mut claude_s);
-    let other = dedup_codex(other);
+    let other = dedup_by_id(other);
     let all: Vec<ParsedSession> = claude_s.into_iter().chain(other).collect();
     let mut pairs: Vec<(SessionGroup, SessionSummary)> = group(all)
         .into_iter()
@@ -429,6 +431,7 @@ mod tests {
                 Source::Claude => crate::parsers::claude::parse_file(p).unwrap(),
                 Source::Codex => crate::parsers::codex::parse_file(p).unwrap(),
                 Source::Gemini => crate::parsers::gemini::parse_file(p).unwrap(),
+                Source::Antigravity => crate::parsers::antigravity::parse_file(p).unwrap(),
             })
             .collect()
     }
@@ -639,6 +642,20 @@ mod tests {
         assert_eq!(sums[0].usage.output, 10);
         assert_eq!(sums[0].turn_count, 2);
         assert!(!sums[0].log_deleted);
+    }
+
+    #[test]
+    fn gemini_json_and_jsonl_counted_once() {
+        let mk = |path: &str, n: usize| {
+            let mut c = sess(path, (0..n).map(|i| turn("g", None, i as i64, 5)).collect());
+            c.source = Source::Gemini;
+            c.id = "x".into();
+            c
+        };
+        let (g, sums) = build(vec![mk("a.json", 1), mk("b.jsonl", 2)], &table());
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].transcripts[0].file_path, "b.jsonl");
+        assert_eq!(sums[0].turn_count, 2);
     }
 
     #[test]

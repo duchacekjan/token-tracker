@@ -2,7 +2,7 @@ use crate::model::{ParsedSession, ParsedTurn, Source, TokenUsage};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn apply_record(record: Value, metadata: &mut Value, messages: &mut Vec<Value>) {
     if let Some(id) = record.get("$rewindTo").and_then(Value::as_str) {
@@ -34,9 +34,13 @@ fn apply_record(record: Value, metadata: &mut Value, messages: &mut Vec<Value>) 
     }
 }
 
+pub(crate) fn project_root_path(path: &Path) -> Option<PathBuf> {
+    Some(path.parent()?.parent()?.join(".project_root"))
+}
+
 /// Real project path from `<slug>/.project_root` (file lives in `<slug>/chats/`).
 fn project_root(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path.parent()?.parent()?.join(".project_root")).ok()?;
+    let text = std::fs::read_to_string(project_root_path(path)?).ok()?;
     Some(text.trim().to_owned()).filter(|s| !s.is_empty())
 }
 

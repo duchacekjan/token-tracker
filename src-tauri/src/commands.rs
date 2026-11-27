@@ -2,7 +2,7 @@ use crate::aggregate::{self, SessionGroup};
 use crate::db::{Store, SyncStats};
 use crate::discovery::{self, Settings, SettingsView};
 use crate::model::{SessionDetail, SessionSummary, Source};
-use crate::parsers::{claude, codex, gemini};
+use crate::parsers::{antigravity, claude, codex, gemini};
 use crate::pricing::{PriceTable, PricingStatus};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -20,6 +20,7 @@ fn group_key(source: Source, id: &str) -> GroupKey {
         Source::Claude => "claude",
         Source::Codex => "codex",
         Source::Gemini => "gemini",
+        Source::Antigravity => "antigravity",
     };
     (src, id.to_string())
 }
@@ -63,7 +64,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 fn settings_view(app: &tauri::AppHandle, state: &AppState) -> Result<SettingsView, String> {
     let settings = discovery::load_settings(&config_dir(app)?);
-    let (c, x, g) = discovery::effective_dirs(&settings);
+    let (c, x, g, a) = discovery::effective_dirs(&settings);
     let strs = |v: Vec<PathBuf>| v.iter().map(|p| p.to_string_lossy().into_owned()).collect();
     let pricing = state.pricing.read().map_err(|e| e.to_string())?.status();
     Ok(SettingsView {
@@ -71,6 +72,7 @@ fn settings_view(app: &tauri::AppHandle, state: &AppState) -> Result<SettingsVie
         claude_dirs: strs(c),
         codex_dirs: strs(x),
         gemini_dirs: strs(g),
+        antigravity_dirs: strs(a),
         pricing,
     })
 }
@@ -80,6 +82,7 @@ fn parse_any(source: Source, path: &Path) -> anyhow::Result<crate::model::Parsed
         Source::Claude => claude::parse_file(path),
         Source::Codex => codex::parse_file(path),
         Source::Gemini => gemini::parse_file(path),
+        Source::Antigravity => antigravity::parse_file(path),
     }
 }
 
@@ -89,12 +92,37 @@ fn run_pipeline(
     claude_files: &[PathBuf],
     codex_files: &[PathBuf],
     gemini_files: &[PathBuf],
+    antigravity_files: &[PathBuf],
     prices: &PriceTable,
 ) -> anyhow::Result<(SyncStats, Vec<SessionGroup>, Vec<SessionSummary>)> {
-    let stats = store.sync(claude_files, codex_files, gemini_files, parse_any)?;
+    let stats = store.sync(
+        claude_files,
+        codex_files,
+        gemini_files,
+        antigravity_files,
+        parse_any,
+    )?;
     let sessions = store.load_all()?;
     let (groups, summaries) = aggregate::build(sessions, prices);
     Ok((stats, groups, summaries))
+}
+
+/// Gemini session log: `session-*.jsonl` or legacy `session-*.json`.
+fn is_gemini_session_file(p: &Path) -> bool {
+    let name_ok = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("session-"));
+    let ext_ok = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("jsonl") || e.eq_ignore_ascii_case("json"));
+    name_ok && ext_ok
+}
+
+/// Antigravity transcript; `transcript_full.jsonl` and `logs/chunks/**` are copies.
+fn is_antigravity_transcript(p: &Path) -> bool {
+    p.file_name().is_some_and(|n| n == "transcript.jsonl") && antigravity::session_dir(p).is_some()
 }
 
 /// Sync the DB with disk, rebuild groups in state, return summaries.
@@ -103,23 +131,20 @@ async fn refresh(app: &tauri::AppHandle) -> Result<Vec<SessionSummary>, String> 
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app2.state::<AppState>();
-        let (cd, xd, gd) = discovery::effective_dirs(&settings);
+        let (cd, xd, gd, ad) = discovery::effective_dirs(&settings);
         let cf = discovery::find_jsonl(&cd);
         let xf = discovery::find_jsonl(&xd);
-        let gf: Vec<_> = discovery::find_jsonl(&gd)
+        let gf: Vec<_> = discovery::find_files(&gd, &["jsonl", "json"])
             .into_iter()
-            .filter(|p| {
-                p.parent()
-                    .and_then(|p| p.file_name())
-                    .is_some_and(|n| n == "chats")
-                    && p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("session-"))
-            })
+            .filter(|p| is_gemini_session_file(p))
+            .collect();
+        let af: Vec<_> = discovery::find_jsonl(&ad)
+            .into_iter()
+            .filter(|p| is_antigravity_transcript(p))
             .collect();
         let (_, groups, summaries) = {
             let prices = state.pricing.read().map_err(|e| e.to_string())?;
-            run_pipeline(&mut lock(&state.store), &cf, &xf, &gf, &prices)
+            run_pipeline(&mut lock(&state.store), &cf, &xf, &gf, &af, &prices)
                 .map_err(|e| e.to_string())?
         };
         let map: HashMap<GroupKey, SessionGroup> = groups
@@ -314,6 +339,24 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn gemini_and_antigravity_file_filters() {
+        let g = |s: &str| is_gemini_session_file(Path::new(s));
+        assert!(g("/x/chats/session-1.jsonl"));
+        assert!(g("/x/session-1.JSON"));
+        assert!(!g("/x/chats/other.jsonl"));
+        assert!(!g("/x/session-1.txt"));
+        let a = |s: &str| is_antigravity_transcript(Path::new(s));
+        assert!(a("/r/brain/i/.system_generated/logs/transcript.jsonl"));
+        assert!(!a(
+            "/r/brain/i/.system_generated/logs/transcript_full.jsonl"
+        ));
+        assert!(!a(
+            "/r/brain/i/.system_generated/logs/chunks/transcript.jsonl"
+        ));
+        assert!(!a("/r/brain/i/logs/transcript.jsonl"));
+    }
+
+    #[test]
     fn lock_recovers_poisoned() {
         let m = Arc::new(Mutex::new(1));
         let m2 = Arc::clone(&m);
@@ -334,7 +377,7 @@ mod tests {
         let prices = PriceTable::load(Path::new("/nonexistent-cache-dir"));
         let mut store = Store::open_in_memory().unwrap();
 
-        let (s1, groups, sums) = run_pipeline(&mut store, &cf, &xf, &[], &prices).unwrap();
+        let (s1, groups, sums) = run_pipeline(&mut store, &cf, &xf, &[], &[], &prices).unwrap();
         assert!(s1.parsed > 0);
         assert_eq!(groups.len(), sums.len());
         assert!(groups.iter().any(|g| g.source == Source::Codex));
@@ -342,7 +385,7 @@ mod tests {
             .iter()
             .any(|s| s.source == Source::Claude && s.subagent_count > 0));
 
-        let (s2, groups2, sums2) = run_pipeline(&mut store, &cf, &xf, &[], &prices).unwrap();
+        let (s2, groups2, sums2) = run_pipeline(&mut store, &cf, &xf, &[], &[], &prices).unwrap();
         assert_eq!(s2.parsed, 0);
         assert_eq!(s2.unchanged, s1.parsed);
         assert_eq!(groups2.len(), groups.len());
@@ -355,7 +398,7 @@ mod tests {
         let xf = discovery::find_jsonl(&[root.join("codex")]);
         let prices = PriceTable::load(Path::new("/nonexistent-cache-dir"));
         let mut store = Store::open_in_memory().unwrap();
-        let (_, groups, _) = run_pipeline(&mut store, &cf, &xf, &[], &prices).unwrap();
+        let (_, groups, _) = run_pipeline(&mut store, &cf, &xf, &[], &[], &prices).unwrap();
         let map = groups
             .into_iter()
             .map(|g| (group_key(g.source, &g.id), g))
