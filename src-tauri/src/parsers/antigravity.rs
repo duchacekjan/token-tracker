@@ -37,6 +37,88 @@ pub fn meta_path(path: &Path) -> Option<PathBuf> {
     )
 }
 
+/// `<root>/conversations/<id>.db` (SQLite) for a transcript path.
+pub fn db_path(path: &Path) -> Option<PathBuf> {
+    Some(meta_path(path)?.with_extension("db"))
+}
+
+/// Iterate protobuf fields as (field number, len-delimited payload); other wire
+/// types yield an empty slice. None on malformed input or unknown wire type.
+fn fields(mut b: &[u8]) -> Option<Vec<(u64, &[u8])>> {
+    fn varint(b: &mut &[u8]) -> Option<u64> {
+        let mut v = 0u64;
+        for i in 0..10 {
+            let byte = *b.get(i)?;
+            v |= u64::from(byte & 0x7f) << (7 * i);
+            if byte & 0x80 == 0 {
+                *b = &b[i + 1..];
+                return Some(v);
+            }
+        }
+        None
+    }
+    let mut out = Vec::new();
+    while !b.is_empty() {
+        let key = varint(&mut b)?;
+        let skip = |b: &mut &[u8], n: usize| -> Option<()> {
+            *b = b.get(n..)?;
+            Some(())
+        };
+        match key & 7 {
+            0 => {
+                varint(&mut b)?;
+                out.push((key >> 3, &[][..]));
+            }
+            1 => skip(&mut b, 8)?,
+            5 => skip(&mut b, 4)?,
+            2 => {
+                let n = usize::try_from(varint(&mut b)?).ok()?;
+                out.push((key >> 3, b.get(..n)?));
+                skip(&mut b, n)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+fn sub(b: &[u8], n: u64) -> Option<&[u8]> {
+    fields(b)?.into_iter().find(|f| f.0 == n).map(|f| f.1)
+}
+
+/// Model string at field path 5 -> 24 -> 8, else 5 -> 24 -> 20.
+fn model_from_payload(b: &[u8]) -> Option<String> {
+    let m = sub(sub(b, 5)?, 24)?;
+    [8, 20].iter().find_map(|&n| {
+        let s = std::str::from_utf8(sub(m, n)?).ok()?;
+        (!s.is_empty()).then(|| s.to_owned())
+    })
+}
+
+/// step idx -> model from the conversation DB; empty on any error. Read-only.
+fn read_db_models(path: &Path) -> HashMap<i64, String> {
+    let mut map = HashMap::new();
+    let Some(db) = db_path(path) else { return map };
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return map;
+    };
+    let Ok(mut st) = conn.prepare("select idx, step_payload from steps") else {
+        return map;
+    };
+    let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))) else {
+        return map;
+    };
+    for (idx, payload) in rows.flatten() {
+        if let Some(m) = model_from_payload(&payload) {
+            map.insert(idx, m);
+        }
+    }
+    map
+}
+
 pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
     let reader = BufReader::new(File::open(path)?);
 
@@ -116,9 +198,15 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
 
     let meta = read_meta(path);
     let meta_str = |k: &str| meta.as_ref()?.get(k)?.as_str().map(String::from);
-    let model = meta_str("model_id").unwrap_or_else(|| "unknown".to_string());
+    let fallback = meta_str("model_id").unwrap_or_else(|| "unknown".to_string());
+    let db_models = read_db_models(path);
     for t in &mut turns {
-        t.model = model.clone();
+        t.model = t
+            .dedup_key
+            .as_deref()
+            .and_then(|k| k.strip_prefix("step-")?.parse::<i64>().ok())
+            .and_then(|i| db_models.get(&i).cloned())
+            .unwrap_or_else(|| fallback.clone());
     }
 
     Ok(ParsedSession {
@@ -250,5 +338,87 @@ mod tests {
     #[test]
     fn missing_file_errs() {
         assert!(parse_file(&fixture("nope")).is_err());
+    }
+
+    fn enc(field: u64, body: &[u8]) -> Vec<u8> {
+        let key = field << 3 | 2; // fields here are < 256, so key fits 2 varint bytes
+        let mut v = if key < 0x80 {
+            vec![key as u8]
+        } else {
+            vec![(key & 0x7f) as u8 | 0x80, (key >> 7) as u8]
+        };
+        v.push(u8::try_from(body.len()).unwrap());
+        v.extend_from_slice(body);
+        v
+    }
+
+    fn payload(model: &str) -> Vec<u8> {
+        // junk varint field 1 + 5 -> 24 -> 8
+        let mut p = vec![0x08, 0x01];
+        p.extend(enc(5, &enc(24, &enc(8, model.as_bytes()))));
+        p
+    }
+
+    #[test]
+    fn walker_rejects_malformed() {
+        assert!(fields(&[0x2a, 0x05, 1]).is_none()); // len past end
+        assert!(fields(&[0x0b]).is_none()); // wire type 3
+        assert!(fields(&[0x08, 0x80]).is_none()); // truncated varint
+        assert!(model_from_payload(&[0xff; 12]).is_none());
+        assert_eq!(model_from_payload(&payload("m")).as_deref(), Some("m"));
+        let mut alt = enc(5, &enc(24, &enc(20, b"alt")));
+        assert_eq!(model_from_payload(&alt).as_deref(), Some("alt"));
+        alt = enc(5, &enc(24, &enc(8, b"")));
+        assert!(model_from_payload(&alt).is_none());
+    }
+
+    #[test]
+    fn per_step_model_from_db_with_fallbacks() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        let id = "eeeeeeee-0000-4000-8000-000000000005";
+        let logs = root.join("brain").join(id).join(".system_generated/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::create_dir_all(root.join("conversations")).unwrap();
+        let t = logs.join("transcript.jsonl");
+        let lines: String = [1, 3, 4, 5, 6]
+            .iter()
+            .map(|i| format!("{{\"step_index\":{i},\"type\":\"PLANNER_RESPONSE\"}}\n"))
+            .collect();
+        std::fs::write(&t, lines).unwrap();
+
+        // no meta, no db
+        let s = parse_file(&t).unwrap();
+        assert!(s.turns.iter().all(|t| t.model == "unknown"));
+
+        let conn = rusqlite::Connection::open(db_path(&t).unwrap()).unwrap();
+        conn.execute("create table steps(idx INTEGER, step_payload BLOB)", [])
+            .unwrap();
+        let rows: [(i64, Vec<u8>); 4] = [
+            (1, payload("model-a")),
+            (3, payload("model-b")),
+            (4, vec![0x08, 0x01]),       // no model field
+            (5, vec![0xff, 0xff, 0xff]), // garbage
+        ];
+        for (i, p) in rows {
+            conn.execute("insert into steps values (?1, ?2)", rusqlite::params![i, p])
+                .unwrap();
+        }
+        drop(conn);
+
+        let models =
+            |s: &ParsedSession| s.turns.iter().map(|t| t.model.clone()).collect::<Vec<_>>();
+        let s = parse_file(&t).unwrap();
+        assert_eq!(
+            models(&s),
+            ["model-a", "model-b", "unknown", "unknown", "unknown"]
+        );
+
+        std::fs::write(meta_path(&t).unwrap(), r#"{"model_id":"meta-m"}"#).unwrap();
+        let s = parse_file(&t).unwrap();
+        assert_eq!(
+            models(&s),
+            ["model-a", "model-b", "meta-m", "meta-m", "meta-m"]
+        );
     }
 }

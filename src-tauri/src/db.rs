@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 /// Bump when parser output semantics change; forces a reparse of every file.
-pub const PARSER_VERSION: i64 = 4;
+pub const PARSER_VERSION: i64 = 5;
 
 pub(crate) const SCHEMA_VERSION: i64 = 3;
 
@@ -75,10 +75,16 @@ fn to_u64(v: Option<i64>) -> u64 {
 type Stored = (i64, i64, i64, Option<i64>, Option<i64>);
 
 /// Sibling `<stem>.meta.json` stat for Claude subagent transcripts;
-/// `conversations/<id>.meta` stat for Antigravity.
+/// `conversations/<id>.{meta,db}` stat for Antigravity.
 fn meta_stat(source: Source, path: &Path) -> Option<(i64, i64)> {
     if source == Source::Antigravity {
-        return stat(&crate::parsers::antigravity::meta_path(path)?).ok();
+        // Combine `.meta` and `.db`: summed sizes, latest mtime; either may be absent.
+        let a = stat(&crate::parsers::antigravity::meta_path(path)?).ok();
+        let b = stat(&crate::parsers::antigravity::db_path(path)?).ok();
+        return match (a, b) {
+            (Some(a), Some(b)) => Some((a.0 + b.0, a.1.max(b.1))),
+            (a, b) => a.or(b),
+        };
     }
     if source == Source::Gemini {
         return stat(&crate::parsers::gemini::project_root_path(path)?).ok();
