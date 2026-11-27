@@ -1,6 +1,6 @@
 # Token Tracker
 
-Token Tracker is a desktop app that reads session logs from Claude Code, OpenAI Codex CLI and Gemini CLI and shows token usage and estimated USD cost for each session.
+Token Tracker is a desktop app that reads session logs from Claude Code, OpenAI Codex CLI, Gemini CLI and Antigravity and shows token usage and estimated USD cost for each session.
 
 It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app reads log files. Parsed token data is kept in a local SQLite database.
 
@@ -11,7 +11,7 @@ It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app reads
 - **Shared filters.** The filter bar applies to both tabs. See [Filters](#filters).
 - **CSV export.** Writes the filtered sessions, transcripts or turns to a CSV file. See [CSV export](#csv-export).
 - **Session detail.** Shows the token usage of one session, broken down by transcript.
-- **Settings.** Adds extra log directories for Claude Code, Codex CLI or Gemini CLI.
+- **Settings.** Adds extra log directories for Claude Code, Codex CLI, Gemini CLI or Antigravity.
 - **Pricing refresh.** Downloads current model prices and adds changes to the price history. See [Pricing](#pricing).
 
 ## Prerequisites
@@ -57,18 +57,24 @@ npm run tauri build   # build a release bundle for your platform
 
 **Gemini CLI**
 
-- The app reads `~/.gemini/tmp` recursively, including session files under `<project>/chats/session-*.jsonl`.
-- Settings can add custom Gemini log directories. Add the directory that contains Gemini session files, and the app scans it recursively.
+- If `GEMINI_CLI_HOME` is set and not empty, the app reads `$GEMINI_CLI_HOME/.gemini/tmp`. Otherwise, it reads `~/.gemini/tmp`.
+- Session files are named `session-*.jsonl`, or legacy `session-*.json`, anywhere under that directory. No `chats` folder is required.
 
-Only directories that exist are used. Each one is scanned recursively for files ending in `.jsonl` (case-insensitive). Symbolic links are not followed. Claude Code worker transcripts are found by the same scan. See [Sessions and worker transcripts](#sessions-and-worker-transcripts).
+**Antigravity**
+
+- The app reads `~/.gemini/antigravity` and `~/.gemini/antigravity-acp`.
+- Only `brain/<id>/.system_generated/logs/transcript.jsonl` is read. The model and project come from `conversations/<id>.meta` in the same root.
+
+Only directories that exist are used. Each one is scanned recursively for files ending in `.jsonl` (case-insensitive), and Gemini CLI also takes `.json` files. Symbolic links are not followed. Claude Code worker transcripts are found by the same scan. See [Sessions and worker transcripts](#sessions-and-worker-transcripts).
 
 **Extra directories**
 
-Settings lets you add more directories for Claude Code, Codex CLI or Gemini CLI. Extra directories are added to the default directories above. Each one is scanned as given, recursively. The app does not append `projects`, `sessions` or `chats`, so add the directory that contains the `.jsonl` files itself, for example:
+Settings lets you add more directories for Claude Code, Codex CLI, Gemini CLI or Antigravity. Extra directories are added to the default directories above. Each one is scanned as given, recursively. The app does not append `projects`, `sessions` or `chats`, so add the directory that contains the `.jsonl` files itself, for example:
 
 - Claude Code: `/path/to/.claude/projects`
 - Codex CLI: `/path/to/.codex/sessions`
 - Gemini CLI: `/path/to/.gemini/tmp`
+- Antigravity: `/path/to/.gemini/antigravity`
 
 Duplicate and missing paths are ignored.
 
@@ -78,7 +84,8 @@ Extra directories are stored in `settings.json` in the app config directory:
 {
   "extraClaudeDirs": ["/mnt/backup/claude/projects"],
   "extraCodexDirs": [],
-  "extraGeminiDirs": []
+  "extraGeminiDirs": [],
+  "extraAntigravityDirs": []
 }
 ```
 
@@ -129,6 +136,19 @@ No integrity check runs at startup, so damage deeper in the file surfaces later 
 - Codex moves rollouts from `sessions/` to `archived_sessions/`, so one session ID can have two copies. One transcript is kept per session ID. The order is: the file still on disk over a log-deleted one, then more turns, then a later last turn, then the smaller file path. The other copy is dropped.
 - Codex subagents are detected from `source.subagent.thread_spawn` or `thread_source: "subagent"`. Their `parent_thread_id` links them to the session that invoked them, and `agent_role` supplies the worker label and type. Nested workers stay under the top-level invoking session, while each worker retains its direct parent link. If a parent log is missing, its workers remain visible in a group keyed by that parent ID.
 
+**Gemini CLI** (`src-tauri/src/parsers/gemini.rs`)
+
+- Reads the `gemini` messages that have a `tokens` object. Lines are applied in file order. A line with an `id` replaces the message with that ID, or is added if the ID is new. `$set` replaces the message list or metadata. `$patch` with `removeIds` removes messages. `$rewindTo` drops the messages from that ID on. An unknown ID clears all messages. Lines that are not valid JSON are skipped.
+- Legacy `.json` files hold one object with a `messages` array. They are read the same way.
+- Input is `input` minus `cached`, plus `tool`. Cache read is `cached`. Output is `output` plus `thoughts`, and `thoughts` is also reported as reasoning.
+- The session ID is `sessionId`, or the file name without its extension if that is empty. The project is the text of `.project_root` in the `<project>` folder above `chats/`, or else `projectHash`.
+
+**Antigravity** (`src-tauri/src/parsers/antigravity.rs`)
+
+- Reads `PLANNER_RESPONSE` lines. Input is `input_tokens`, cache read is `cache_read_tokens`, and output is `output_tokens`. Cache creation and reasoning are zero.
+- Lines with the same `step_index` are merged. The last line's usage is kept, at the position of the first line. Lines without a step index are each kept.
+- The session ID is the `<id>` folder name. The model is `model_id` from the `.meta` file, or `unknown`. The project is `cwd` from the `.meta` file, or else the first tool call's `Cwd` argument.
+
 ## Sessions and worker transcripts
 
 Claude Code runs subagents as separate transcripts. They are stored as `agent-<id>.jsonl` in a `subagents` folder under a folder named after the session ID, with a sibling `agent-<id>.meta.json`.
@@ -142,7 +162,7 @@ Claude Code runs subagents as separate transcripts. They are stored as `agent-<i
 
 The Table and Charts tabs share one filter bar above them. The same filters apply to both tabs.
 
-- **Source.** All sources, Claude Code only, or Codex CLI only.
+- **Source.** All sources, or only Claude Code, Codex CLI, Gemini CLI or Antigravity.
 - **Search.** Matches the project, session ID, model, and the label, agent ID and agent type of worker transcripts. See [Sessions and worker transcripts](#sessions-and-worker-transcripts).
 - **From and To.** A local-time date range. Both ends are inclusive. A session is kept when its start time falls on a local day within the range. A session with no start time is left out while either date is set. Clear dates removes both dates.
 
@@ -254,6 +274,7 @@ Each model has a timeline of price entries. An entry has a `from` date and is va
 1. The exact name.
 2. The name without trailing tags such as `[1m]`.
 3. The name without a trailing `-YYYYMMDD` date.
+4. The name without a trailing effort suffix (`-minimal`, `-low`, `-medium` or `-high`), tried after the date is removed.
 
 There is no other matching. A model that matches none of these is unpriced and shows `—`. Gemini models receive prices when their model names match a bundled or refreshed `gemini-` entry. Unknown or unmatched model names remain unpriced.
 
@@ -340,8 +361,10 @@ Each turn is priced separately, using the price for its timestamp. Prices are fl
         ├── pricing.rs            price timeline, lookup and cost
         ├── startup.rs            database open and recovery
         └── parsers/
+            ├── antigravity.rs    Antigravity transcript parser
             ├── claude.rs         Claude Code log parser
-            └── codex.rs          Codex CLI log parser
+            ├── codex.rs          Codex CLI log parser
+            └── gemini.rs         Gemini CLI log parser
 ```
 
 ## License
