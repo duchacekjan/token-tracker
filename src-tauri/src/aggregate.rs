@@ -51,6 +51,8 @@ pub fn summarize(s: &ParsedSession, prices: &PriceTable) -> SessionSummary {
     let models: Vec<String> = models.into_iter().map(String::from).collect();
     let unpriced: Vec<String> = unpriced.into_iter().collect();
     let transcript = TranscriptSummary {
+        session_id: s.id.clone(),
+        parent_session_id: s.parent_session_id.clone(),
         file_path: s.file_path.clone(),
         agent_id: s.agent_id.clone(),
         agent_label: s.agent_label.clone(),
@@ -99,18 +101,45 @@ fn first_stamp(s: &ParsedSession) -> Option<DateTime<Utc>> {
 /// subagents by first turn timestamp (None last), ties by file path.
 /// Groups keep first-seen order.
 pub fn group(sessions: Vec<ParsedSession>) -> Vec<SessionGroup> {
+    let parents: HashMap<String, String> = sessions
+        .iter()
+        .filter(|s| s.source == Source::Codex && s.is_subagent)
+        .filter_map(|s| {
+            s.parent_session_id
+                .as_ref()
+                .map(|p| (s.id.clone(), p.clone()))
+        })
+        .collect();
     let mut index: HashMap<(String, String), usize> = HashMap::new();
     let mut groups: Vec<SessionGroup> = Vec::new();
     for s in sessions {
+        if s.turns.is_empty() {
+            continue;
+        }
         let src = match s.source {
             Source::Claude => "claude",
             Source::Codex => "codex",
         };
-        let key = (src.to_string(), s.id.clone());
+        let mut root = s.id.clone();
+        if s.source == Source::Codex {
+            let mut visited = Vec::new();
+            loop {
+                if let Some(cycle_start) = visited.iter().position(|id| id == &root) {
+                    root = visited[cycle_start..].iter().min().cloned().unwrap();
+                    break;
+                }
+                visited.push(root.clone());
+                match parents.get(&root) {
+                    Some(parent) => root = parent.clone(),
+                    None => break,
+                }
+            }
+        }
+        let key = (src.to_string(), root.clone());
         let i = *index.entry(key).or_insert_with(|| {
             groups.push(SessionGroup {
                 source: s.source,
-                id: s.id.clone(),
+                id: root,
                 transcripts: Vec::new(),
             });
             groups.len() - 1
@@ -269,11 +298,7 @@ pub fn build(
     });
     dedup_claude(&mut claude_s);
     let other = dedup_codex(other);
-    let all: Vec<ParsedSession> = claude_s
-        .into_iter()
-        .chain(other)
-        .filter(|s| !s.turns.is_empty())
-        .collect();
+    let all: Vec<ParsedSession> = claude_s.into_iter().chain(other).collect();
     let mut pairs: Vec<(SessionGroup, SessionSummary)> = group(all)
         .into_iter()
         .map(|g| {

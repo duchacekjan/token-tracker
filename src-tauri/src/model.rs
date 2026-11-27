@@ -83,6 +83,8 @@ pub struct Turn {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptSummary {
+    pub session_id: String,
+    pub parent_session_id: Option<String>,
     pub file_path: String,
     pub agent_id: Option<String>,
     pub agent_label: Option<String>,
