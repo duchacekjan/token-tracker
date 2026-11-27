@@ -139,15 +139,15 @@ No integrity check runs at startup, so damage deeper in the file surfaces later 
 **Gemini CLI** (`src-tauri/src/parsers/gemini.rs`)
 
 - Reads the `gemini` messages that have a `tokens` object. Lines are applied in file order. A line with an `id` replaces the message with that ID, or is added if the ID is new. `$set` replaces the message list or metadata. `$patch` with `removeIds` removes messages. `$rewindTo` drops the messages from that ID on. An unknown ID clears all messages. Lines that are not valid JSON are skipped.
-- Legacy `.json` files hold one object with a `messages` array. They are read the same way.
+- Legacy `.json` files hold one object with a `messages` array. They are read the same way. A `.json` and a `.jsonl` file with the same session ID are counted once, as for Codex.
 - Input is `input` minus `cached`, plus `tool`. Cache read is `cached`. Output is `output` plus `thoughts`, and `thoughts` is also reported as reasoning.
 - The session ID is `sessionId`, or the file name without its extension if that is empty. The project is the text of `.project_root` in the `<project>` folder above `chats/`, or else `projectHash`.
 
 **Antigravity** (`src-tauri/src/parsers/antigravity.rs`)
 
 - Reads `PLANNER_RESPONSE` lines. Input is `input_tokens`, cache read is `cache_read_tokens`, and output is `output_tokens`. Cache creation and reasoning are zero.
-- Lines with the same `step_index` are merged. The last line's usage is kept, at the position of the first line. Lines without a step index are each kept.
-- The session ID is the `<id>` folder name. The model is `model_id` from the `.meta` file, or `unknown`. The project is `cwd` from the `.meta` file, or else the first tool call's `Cwd` argument.
+- Lines with the same `step_index` are merged. The last line's usage is kept, at the position of the first line. A later line with no token fields keeps the earlier usage. Lines without a step index are each kept.
+- The session ID is the `<id>` folder name. The model is `model_id` from the `.meta` file, or `unknown`. The project is `cwd` from the `.meta` file, or else the first tool call's `Cwd` argument. A JSON-quoted `Cwd` is unquoted.
 
 ## Sessions and worker transcripts
 
@@ -251,7 +251,7 @@ Each level has its own fields. The Defaults, All and None buttons change the sel
 
 ## Pricing
 
-Each turn, including Gemini CLI turns, is priced at the LiteLLM rate that was valid at the turn's timestamp. Rates come from LiteLLM's [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm), using the same bundled history and Refresh prices flow for every supported harness.
+Each turn, including Gemini CLI and Antigravity turns, is priced at the LiteLLM rate that was valid at the turn's timestamp. Rates come from LiteLLM's [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm), using the same bundled history and Refresh prices flow for every supported harness.
 
 **Price timeline**
 
@@ -274,7 +274,7 @@ Each model has a timeline of price entries. An entry has a `from` date and is va
 1. The exact name.
 2. The name without trailing tags such as `[1m]`.
 3. The name without a trailing `-YYYYMMDD` date.
-4. The name without a trailing effort suffix (`-minimal`, `-low`, `-medium` or `-high`), tried after the date is removed.
+4. The name without a trailing effort suffix (`-minimal`, `-low`, `-medium` or `-high`), tried after the date is removed. Only for `gemini-` models.
 
 There is no other matching. A model that matches none of these is unpriced and shows `—`. Gemini models receive prices when their model names match a bundled or refreshed `gemini-` entry. Unknown or unmatched model names remain unpriced.
 
