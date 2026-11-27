@@ -1,4 +1,5 @@
 use crate::model::{ParsedSession, ParsedTurn, Source, TokenUsage};
+use crate::pricing::strip_effort;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -207,6 +208,7 @@ pub fn parse_file(path: &Path) -> anyhow::Result<ParsedSession> {
             .and_then(|k| k.strip_prefix("step-")?.parse::<i64>().ok())
             .and_then(|i| db_models.get(&i).cloned())
             .unwrap_or_else(|| fallback.clone());
+        t.model = strip_effort(&t.model).to_string();
     }
 
     Ok(ParsedSession {
@@ -255,7 +257,7 @@ mod tests {
         assert_eq!(s.turns.len(), 2);
         let (a, b) = (&s.turns[0], &s.turns[1]);
         assert_eq!(a.dedup_key.as_deref(), Some("step-2"));
-        assert_eq!(a.model, "gemini-3.8-flash-medium");
+        assert_eq!(a.model, "gemini-3.8-flash");
         let u = |t: &ParsedTurn| {
             (
                 t.usage.input,
@@ -396,7 +398,7 @@ mod tests {
             .unwrap();
         let rows: [(i64, Vec<u8>); 4] = [
             (1, payload("model-a")),
-            (3, payload("model-b")),
+            (3, payload("gemini-x-medium")),
             (4, vec![0x08, 0x01]),       // no model field
             (5, vec![0xff, 0xff, 0xff]), // garbage
         ];
@@ -411,14 +413,14 @@ mod tests {
         let s = parse_file(&t).unwrap();
         assert_eq!(
             models(&s),
-            ["model-a", "model-b", "unknown", "unknown", "unknown"]
+            ["model-a", "gemini-x", "unknown", "unknown", "unknown"]
         );
 
-        std::fs::write(meta_path(&t).unwrap(), r#"{"model_id":"meta-m"}"#).unwrap();
+        std::fs::write(meta_path(&t).unwrap(), r#"{"model_id":"gemini-m-low"}"#).unwrap();
         let s = parse_file(&t).unwrap();
         assert_eq!(
             models(&s),
-            ["model-a", "model-b", "meta-m", "meta-m", "meta-m"]
+            ["model-a", "gemini-x", "gemini-m", "gemini-m", "gemini-m"]
         );
     }
 }

@@ -364,11 +364,7 @@ impl PriceTable {
         let no_tags = strip_tags(m);
         let no_date = strip_date(no_tags);
         let get = |k: &str| self.models.get(k).filter(|v| !v.is_empty());
-        let no_effort = ["-minimal", "-low", "-medium", "-high"]
-            .iter()
-            .filter(|_| no_date.starts_with("gemini-"))
-            .find_map(|e| no_date.strip_suffix(e))
-            .unwrap_or(no_date);
+        let no_effort = strip_effort(no_date);
         let timeline = [m, no_tags, no_date, no_effort].into_iter().find_map(get)?;
         let entry = match at {
             None => timeline.last()?,
@@ -393,6 +389,15 @@ impl PriceTable {
     pub fn status(&self) -> PricingStatus {
         self.status.clone()
     }
+}
+
+/// Drop trailing reasoning-effort suffix from `gemini-` model names.
+pub(crate) fn strip_effort(model: &str) -> &str {
+    ["-minimal", "-low", "-medium", "-high"]
+        .iter()
+        .filter(|_| model.starts_with("gemini-"))
+        .find_map(|e| model.strip_suffix(e))
+        .unwrap_or(model)
 }
 
 #[cfg(test)]

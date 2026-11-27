@@ -64,6 +64,7 @@ npm run tauri build   # build a release bundle for your platform
 
 - The app reads `~/.gemini/antigravity` and `~/.gemini/antigravity-acp`.
 - Only `brain/<id>/.system_generated/logs/transcript.jsonl` is read. The model comes from the `steps` table of `conversations/<id>.db` in the same root, opened read-only, so a model switch in the middle of a session is attributed per turn. The project comes from `conversations/<id>.meta`. Google does not document the database, so an Antigravity update may break it. The model then falls back to the `.meta` file.
+- The trailing reasoning-effort suffix (`-minimal`, `-low`, `-medium`, `-high`) is dropped from the displayed model name, so `gemini-3.8-flash-medium` shows as `gemini-3.8-flash`.
 
 Only directories that exist are used. Each one is scanned recursively for files ending in `.jsonl` (case-insensitive), and Gemini CLI also takes `.json` files. Symbolic links are not followed. Claude Code worker transcripts are found by the same scan. See [Sessions and worker transcripts](#sessions-and-worker-transcripts).
 
