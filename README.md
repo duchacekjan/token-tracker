@@ -7,7 +7,7 @@ It is built with Tauri v2 (Rust backend), Svelte 5 and TypeScript. The app reads
 ## What it does
 
 - **Table.** Lists the sessions found in the log directories, with token totals and estimated cost. Claude Code worker transcripts are grouped under their parent session.
-- **Charts.** Shows token and cost totals over time, and breakdowns by harness, model, project and token type. See [Charts](#charts).
+- **Charts.** Shows token and cost totals over time, a breakdown by harness, model or project, and a stacked timeline by harness or model. See [Charts](#charts).
 - **Shared filters.** The filter bar applies to both tabs. See [Filters](#filters).
 - **CSV export.** Writes the filtered sessions, transcripts or turns to a CSV file. See [CSV export](#csv-export).
 - **Session detail.** Shows the token usage of one session, broken down by transcript.
@@ -153,14 +153,23 @@ The controls are:
 
 The pie and the stacked chart show the 10 largest values, and group the rest as `Other`.
 
+The chart grid places the first card across both columns. The breakdown pie and stacked timeline appear side by side below it. The grid uses one column on screens narrower than 900px.
+
 The cards are:
 
 - **Tokens or cost over time.** Bars show the selected metric per bucket. The line shows the other metric on a second axis.
 - **Breakdown.** A pie of the selected metric, split by the chosen dimension.
-- **Tokens by type.** Input, output, cache creation and cache read per bucket, stacked. Reasoning is not a separate series, because it is already part of output.
 - **Stacked over time.** The selected metric per bucket, stacked by harness or model.
 
 Breakdowns and stacks by model need the turns of each session. When one of these is selected, the app loads the turns of the shown sessions in batches of 100. The card shows `Loading turns…` until this finishes, or the error if it fails.
+
+## Versioning and releases
+
+The app follows Semantic Versioning. Increment the major version for incompatible changes, the minor version for backward-compatible features, and the patch version for backward-compatible fixes. Keep the app version synchronized in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, along with any applicable lockfile entries.
+
+Before opening a pull request, the contributor should recommend a version bump with its reason and proposed version, then ask the user to choose that bump or skip it. Wait for the choice. If approved, update all app version locations and applicable lockfile entries, then commit the version change before opening the pull request. If the user explicitly skips the bump, continue with the current version.
+
+Releases are started manually from the GitHub Actions Release workflow. The workflow uses the Tauri app version to create a `v<version>` tag.
 
 ## CSV export
 
