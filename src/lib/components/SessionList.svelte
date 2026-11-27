@@ -296,6 +296,6 @@
     align-items: center;
     justify-content: flex-end;
     gap: 0.75rem;
-    padding: 0.75rem 0;
+    padding-top: 0.75rem;
   }
 </style>
