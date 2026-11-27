@@ -5,6 +5,7 @@
     durationMs,
     fmtCompact,
     fmtDateTime,
+    fmtTableDateTime,
     fmtDuration,
     fmtInt,
     fmtUsd,
@@ -188,7 +189,7 @@
               {/if}
             </td>
             <td class="ellipsis" title={s.models.join(", ")}>{s.models.join(", ") || "—"}</td>
-            <td>{fmtDateTime(s.startedAt)}</td>
+            <td>{fmtTableDateTime(s.startedAt)}</td>
             <td class="num">{fmtDuration(durationMs(s.startedAt, s.endedAt))}</td>
             <td class="num" title={fmtInt(s.usage.input)}>{fmtCompact(s.usage.input)}</td>
             <td class="num" title={fmtInt(s.usage.output)}>{fmtCompact(s.usage.output)}</td>
@@ -219,7 +220,7 @@
                   {/if}
                 </td>
                 <td class="ellipsis" title={t.models.join(", ")}>{t.models.join(", ") || "—"}</td>
-                <td>{fmtDateTime(t.startedAt)}</td>
+                <td>{fmtTableDateTime(t.startedAt)}</td>
                 <td class="num">{fmtDuration(durationMs(t.startedAt, t.endedAt))}</td>
                 <td class="num" title={fmtInt(t.usage.input)}>{fmtCompact(t.usage.input)}</td>
                 <td class="num" title={fmtInt(t.usage.output)}>{fmtCompact(t.usage.output)}</td>
