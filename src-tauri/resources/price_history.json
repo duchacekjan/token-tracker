@@ -3,6 +3,510 @@
   "generatedAt": "2026-11-25T20:05:59.377Z",
   "headCommit": "33769b8d726ed2455946836f56768d8b4a7f83d7",
   "models": {
+      "gemini-live-2.5-flash-preview-native-audio-09-2025": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 2e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-robotics-er-2-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1e-06,
+          "output": 5e-06,
+          "cacheCreation": null,
+          "cacheRead": 1e-07
+        }
+      ],
+      "gemini-embedding-001": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.5e-07,
+          "output": 0,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-embedding-2": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-07,
+          "output": 0,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3-pro-image-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-06,
+          "output": 1.2e-05,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.1-flash-image-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 3e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.1-flash-lite-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2.5e-07,
+          "output": 1.5e-06,
+          "cacheCreation": null,
+          "cacheRead": 2.5e-08
+        }
+      ],
+      "gemini-embedding-2-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-07,
+          "output": 0,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-2.5-flash": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3e-07,
+          "output": 2.5e-06,
+          "cacheCreation": null,
+          "cacheRead": 3e-08
+        }
+      ],
+      "gemini-2.5-flash-image": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3e-07,
+          "output": 2.5e-06,
+          "cacheCreation": null,
+          "cacheRead": 3e-08
+        }
+      ],
+      "gemini-3-pro-image": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-06,
+          "output": 1.2e-05,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.1-flash-image": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 3e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.1-flash-lite-image": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2.5e-07,
+          "output": 1.5e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-2.5-flash-lite": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1e-07,
+          "output": 4e-07,
+          "cacheCreation": null,
+          "cacheRead": 1e-08
+        }
+      ],
+      "gemini-flash-latest": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 7.5e-07,
+          "output": 3.75e-06,
+          "cacheCreation": null,
+          "cacheRead": 7.5e-08
+        }
+      ],
+      "gemini-flash-lite-latest": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3e-07,
+          "output": 2.5e-06,
+          "cacheCreation": null,
+          "cacheRead": 3e-08
+        }
+      ],
+      "gemini-2.5-flash-preview-tts": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 1e-05,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-2.5-pro": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.25e-06,
+          "output": 1e-05,
+          "cacheCreation": null,
+          "cacheRead": 1.25e-07
+        }
+      ],
+      "gemini-2.5-computer-use-preview-10-2025": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.25e-06,
+          "output": 1e-05,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.1-flash-lite": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2.5e-07,
+          "output": 1.5e-06,
+          "cacheCreation": null,
+          "cacheRead": 2.5e-08
+        }
+      ],
+      "gemini-3.5-flash-lite": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3e-07,
+          "output": 2.5e-06,
+          "cacheCreation": null,
+          "cacheRead": 3e-08
+        }
+      ],
+      "gemini-3-flash-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 3e-06,
+          "cacheCreation": null,
+          "cacheRead": 5e-08
+        }
+      ],
+      "gemini-3.5-flash": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.5e-06,
+          "output": 9e-06,
+          "cacheCreation": null,
+          "cacheRead": 1.5e-07
+        }
+      ],
+      "gemini-3.6-flash": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 7.5e-07,
+          "output": 3.75e-06,
+          "cacheCreation": null,
+          "cacheRead": 7.5e-08
+        }
+      ],
+      "gemini-3.7-flash": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 7.5e-07,
+          "output": 3.75e-06,
+          "cacheCreation": null,
+          "cacheRead": 7.5e-08
+        }
+      ],
+      "gemini-3.8-flash": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 7.5e-07,
+          "output": 3.75e-06,
+          "cacheCreation": null,
+          "cacheRead": 7.5e-08
+        }
+      ],
+      "gemini-omni-flash-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.5e-06,
+          "output": 9e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.1-pro-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-06,
+          "output": 1.2e-05,
+          "cacheCreation": null,
+          "cacheRead": 2e-07
+        }
+      ],
+      "gemini-3.1-pro-preview-customtools": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-06,
+          "output": 1.2e-05,
+          "cacheCreation": null,
+          "cacheRead": 2e-07
+        }
+      ],
+      "gemini-2.5-pro-preview-tts": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1e-06,
+          "output": 2e-05,
+          "cacheCreation": null,
+          "cacheRead": 1.25e-07
+        }
+      ],
+      "gemini-exp-1114": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 0,
+          "output": 0,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-exp-1206": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 0,
+          "output": 0,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-gemma-2-27b-it": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3.5e-07,
+          "output": 1.05e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-gemma-2-9b-it": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3.5e-07,
+          "output": 1.05e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-2.5-flash-native-audio-latest": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 2e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-2.5-flash-native-audio-preview-09-2025": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 2e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-2.5-flash-native-audio-preview-12-2025": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 2e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.1-flash-live-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 7.5e-07,
+          "output": 4.5e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.1-flash-tts-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1e-06,
+          "output": 2e-05,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.8-flash-tts": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 9e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.8-flash-lite-tts": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 5e-07,
+          "output": 6e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-pro-latest": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-06,
+          "output": 1.2e-05,
+          "cacheCreation": null,
+          "cacheRead": 2e-07
+        }
+      ],
+      "gemini-robotics-er-2-streaming-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1e-06,
+          "output": 5e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.5-live-translate-preview": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3.5e-06,
+          "output": 2.1e-05,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.5-transcribe": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-06,
+          "output": 1.2e-05,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.5-transcribe-live": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3.5e-06,
+          "output": 2.1e-05,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-omni-1.1-flash": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.5e-06,
+          "output": 9e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.8-live": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 7.5e-07,
+          "output": 4.5e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-3.8-live-extended-thinking": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 7.5e-07,
+          "output": 4.5e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-nano-banana-2.1": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.5e-06,
+          "output": 7.5e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-4-argon": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-06,
+          "output": 1e-05,
+          "cacheCreation": null,
+          "cacheRead": 1e-07
+        }
+      ],
+      "gemini-omni-1.2-flash": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.5e-06,
+          "output": 9e-06,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-4-carbon": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 2e-06,
+          "output": 1e-05,
+          "cacheCreation": null,
+          "cacheRead": 1e-07
+        }
+      ],
+      "gemini-decision-1": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1e-07,
+          "output": 0.0,
+          "cacheCreation": null,
+          "cacheRead": null
+        }
+      ],
+      "gemini-4-hydrogen": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 1.5e-06,
+          "output": 7.5e-06,
+          "cacheCreation": null,
+          "cacheRead": 7.5e-08
+        }
+      ],
+      "gemini-4-neon": [
+        {
+          "from": "2026-11-27T08:35:33.597026+00:00",
+          "input": 3e-06,
+          "output": 1.5e-05,
+          "cacheCreation": null,
+          "cacheRead": 1.5e-07
+        }
+      ],
     "claude-2": [
       {
         "from": "2023-09-04T11:39:53-07:00",
