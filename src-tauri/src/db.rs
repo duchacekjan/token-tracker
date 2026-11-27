@@ -78,13 +78,19 @@ type Stored = (i64, i64, i64, Option<i64>, Option<i64>);
 /// `conversations/<id>.{meta,db}` stat for Antigravity.
 fn meta_stat(source: Source, path: &Path) -> Option<(i64, i64)> {
     if source == Source::Antigravity {
-        // Combine `.meta` and `.db`: summed sizes, latest mtime; either may be absent.
-        let a = stat(&crate::parsers::antigravity::meta_path(path)?).ok();
-        let b = stat(&crate::parsers::antigravity::db_path(path)?).ok();
-        return match (a, b) {
-            (Some(a), Some(b)) => Some((a.0 + b.0, a.1.max(b.1))),
-            (a, b) => a.or(b),
-        };
+        // Combine `.meta`, `.db`, `.db-wal`: summed sizes, latest mtime; any may be absent.
+        let db = crate::parsers::antigravity::db_path(path)?;
+        let mut wal = db.clone().into_os_string();
+        wal.push("-wal");
+        let metas = [
+            crate::parsers::antigravity::meta_path(path)?,
+            db,
+            wal.into(),
+        ];
+        return metas
+            .iter()
+            .filter_map(|p| stat(p).ok())
+            .reduce(|a, b| (a.0 + b.0, a.1.max(b.1)));
     }
     if source == Source::Gemini {
         return stat(&crate::parsers::gemini::project_root_path(path)?).ok();
@@ -761,6 +767,9 @@ mod tests {
         std::fs::write(&meta, r#"{"model_id":"m-b-longer"}"#).unwrap();
         assert_eq!(s.sync(&[], &[], &[], &f, real_parse).unwrap().parsed, 1);
         assert_eq!(s.load_all().unwrap()[0].turns[0].model, "m-b-longer");
+        assert_eq!(s.sync(&[], &[], &[], &f, real_parse).unwrap().unchanged, 1);
+        std::fs::write(root.join("conversations").join(format!("{id}.db-wal")), "x").unwrap();
+        assert_eq!(s.sync(&[], &[], &[], &f, real_parse).unwrap().parsed, 1);
     }
 
     #[test]
