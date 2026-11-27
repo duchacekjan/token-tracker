@@ -37,6 +37,8 @@
 
   let sortKey = $state<SortKey>("startedAt");
   let sortDir = $state<"asc" | "desc">("desc");
+  let page = $state(1);
+  const pageSize = 25;
 
   let expanded = $state<Record<string, boolean>>({});
   const LOG_DELETED_TIP = "Original log file was removed; data kept in local database";
@@ -118,6 +120,13 @@
     }
     return t;
   });
+
+  const pageCount = $derived(Math.max(1, Math.ceil(sorted.length / pageSize)));
+  $effect(() => {
+    if (page > pageCount) page = pageCount;
+  });
+  const currentPage = $derived(Math.min(page, pageCount));
+  const pageSessions = $derived(sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize));
 </script>
 
 {#if error}
@@ -144,7 +153,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each sorted as s (keyOf(s))}
+        {#each pageSessions as s (keyOf(s))}
           {@const open = !!expanded[keyOf(s)]}
           <tr
             class="clickable"
@@ -265,4 +274,19 @@
       </tfoot>
     </table>
   </div>
+  <nav class="pagination" aria-label="Session pages">
+    <button disabled={currentPage === 1} onclick={() => page--}>Previous</button>
+    <span>Page {currentPage} of {pageCount}</span>
+    <button disabled={currentPage === pageCount} onclick={() => page++}>Next</button>
+  </nav>
 {/if}
+
+<style>
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+  }
+</style>
