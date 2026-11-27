@@ -1,0 +1,4 @@
+{"sessionId":"sess-rw","projectHash":"h"}
+{"id":"m1","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":10,"output":2,"cached":0,"thoughts":0,"tool":0,"total":0}}
+{"$rewindTo":"nope"}
+{"id":"m4","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":4,"output":1,"cached":0,"thoughts":0,"tool":0,"total":0}}
